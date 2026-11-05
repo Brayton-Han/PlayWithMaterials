@@ -385,7 +385,9 @@ class AuthControllerIT {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
         mvc.perform(get("/api/tasks/42")).andExpect(status().isUnauthorized());
-        mvc.perform(post("/api/tasks")).andExpect(status().isUnauthorized());
+        // T-045 只注册了 GET /api/tasks：方法不匹配在拦截器之前由 MVC 判定为 405（不涉及任何用户数据）。
+        // T-041 实现 POST /api/tasks 后，这里应改回 401。
+        mvc.perform(post("/api/tasks")).andExpect(status().isMethodNotAllowed());
         mvc.perform(get("/api/account")).andExpect(status().isUnauthorized());
         mvc.perform(get("/files/uploads/2026/11/x.png")).andExpect(status().isUnauthorized());
         mvc.perform(get("/files/results/1/x.png")).andExpect(status().isUnauthorized());

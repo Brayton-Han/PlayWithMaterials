@@ -283,6 +283,7 @@ flowchart TD
 - **受 OQ 影响**：OQ-09 余项（分页）
 - **完成定义**：F-07 验收标准通过；测试：用户 A 在模板 X、Y 各有任务，带 templateId=X 只返回 X 的任务，不带时两者都返回；用户 B 看不到。
 - **相关**：F-07, F-11
+- **状态**：Done（2026-11-05；F-07 验收第 1 条依赖执行引擎，待 T-046 验证，见下方说明）。`TaskQueryIT`（18）通过：A 在模板 X、Y 各有任务，`?templateId=X` 只返回 X，不带参数（或空白）两者都返回，`created_at DESC, id DESC`；B 查 A 的 taskId → 404 `TASK_NOT_FOUND`（与不存在的 ID 相同），B 的列表不含 A 的任务；PENDING / PROCESSING / SUCCEEDED / FAILED 各状态字段正确，可空字段以 `null` 必返，不含 `userId` / `simConfig` / `storageKey`；`inputAssets` 按 slotIndex 升序、URL = `/files/` + storage_key，列表中每条只带本任务素材（批量加载，无 N+1）；非数字 / 负数 / 超过 19 位的 taskId → 400 `PATTERN`，19 位但超出 long 范围 → 404；templateId 超过 64 字符 → 400；不存在的 templateId → 空列表；匿名、无效会话、账户已删除 → 401；连续查询前后 tasks 行（含 `updated_at`）完全不变。backend `mvnw verify` 共 130 个测试（21 单测 + 109 IT）通过；`docker compose up --build` 后经 :3000 代理 curl 验证 200 / 404 / 401 / 400。说明：`ids` 批量查询（P1）按 implementation-plan 留给 T-073，当前忽略该参数；由于 `/api/tasks` 目前只注册了 GET，匿名 `POST /api/tasks` 在鉴权拦截器之前被 MVC 判为 405（不涉及用户数据），`AuthControllerIT` 中该断言已临时改为 405 并注明 T-041 实现 POST 后改回 401；F-07 验收第 1 条“执行期间状态只前进不后退”依赖执行引擎（T-042/T-043），留给 T-046 第 5 条验证。
 
 #### T-047 用户文件访问控制 · S · P0
 - **范围**（DQ-02 已确认）：`/files/uploads/**`、`/files/results/**` 改由 Controller 提供：需要登录，查库确认文件属于当前用户的任务后返回，否则 404；只用数据库中的存储路径读文件；`Cache-Control: private, no-store`。删除账户后这些链接失效。
