@@ -2,10 +2,12 @@
 
 > 来源：[PRD.md](./PRD.md)（R-01 ~ R-14）及参考截图 [image/1.png ~ image/4.png](../image/)（仓库根目录）
 > 配套文档：[backlog.md](./backlog.md)（任务拆分与实施顺序）、[open-questions.md](./open-questions.md)（待确认问题）
-> 状态：草案 v0.4（2026-11-04）。Open Questions 未关闭前，带 `[待确认 OQ-xx]` 标记的条目不应视为最终规则。
+> 设计文档：[architecture.md](./architecture.md)、[database.md](./database.md)、[api.yaml](./api.yaml)、[implementation-plan.md](./implementation-plan.md)
+> 状态：草案 v0.5（2026-11-04）。Open Questions 未关闭前，带 `[待确认 OQ-xx]` 标记的条目不应视为最终规则。
 > v0.2 变更：已确认 OQ-02（身份：密码登录 + 账户设置页，只保留修改密码和删除账户）、OQ-03（一级分类）、OQ-05（点提交时一起上传图片）、OQ-09（详情页只显示当前模板的任务，另设"我的记录"页）。
 > v0.3 变更：已确认 OQ-23（用户名登录、开放注册、未登录只能看模板）、OQ-25（登录后修改密码）、OQ-26（输入 DELETE 确认删除；数据保留；进行中任务废弃；不可重复注册）。
 > v0.4 变更：注册时需要邮箱，注册后不能修改；登录仍用用户名 + 密码；账户删除后，相同邮箱可以再注册（替代 v0.3 中"不可重复注册"的理解）。
+> v0.5 变更（2026-11-04，架构设计阶段确认，见 open-questions.md DQ-01 ~ DQ-04）：模拟开发接口不需要登录（DQ-01）；用户素材和结果图需要登录且只能本人访问，删除账户后链接失效（DQ-02）；失败任务同时返回 `failureCode` 和 `failureReason`（DQ-03）；"确认密码"只在前端校验，接口不接收（DQ-04）。
 
 ## 0. 文档约定
 
@@ -122,7 +124,7 @@ stateDiagram-v2
 | Category | id/code, name, sortOrder | 一级分类（OQ-03 已确认） |
 | Template | id, title, categoryId, coverUrl, description, requiredImageCount, acceptedMimeTypes, maxFileSizeBytes, sampleResultUrl, sortOrder | 种子数据，只读 |
 | Asset | id, userId, taskId, slotIndex, storagePath, url, mimeType, sizeBytes, originalName, createdAt | 在提交请求中与任务一起创建（OQ-05 已确认），1 个素材只属于 1 个任务 |
-| Task | id, userId, templateId, status, stage, failedStage, failureReason, resultUrl, simulationSnapshot, createdAt, startedAt, finishedAt, updatedAt | 核心实体 |
+| Task | id, userId, templateId, status, stage, failedStage, failureCode, failureReason, resultUrl, simulationSnapshot, createdAt, startedAt, finishedAt, updatedAt | 核心实体 |
 | TaskStepLog（P1） | taskId, stage, outcome, startedAt, endedAt, message | 可选，用于证明阶段边界与排障 |
 
 枚举建议：
@@ -265,7 +267,7 @@ stateDiagram-v2
 7. 服务端拒绝某个文件（类型或大小不符）时，错误响应带上 `slotIndex`，前端在对应上传位上标出错误（`[技术决策]`）。
 8. 上传或提交期间锁定上传位，不能替换或移除，避免界面显示的文件和实际发送的文件不一致。
 9. 服务端独立校验类型与大小（R-03.2）。类型判断依据 `[待确认 OQ-17]`（临时默认：Content-Type 与文件头魔数双重校验）。
-10. 文件保存在后端本地目录或数据卷，Asset 记录归属当前用户和当前任务。素材 URL 的访问控制 `[技术决策]`（临时默认：不可猜测的随机文件名，静态可读）。
+10. 文件保存在后端本地目录或数据卷，Asset 记录归属当前用户和当前任务。素材和结果图的访问控制（DQ-02 已确认）：文件名随机生成；访问时需要登录，且只返回当前用户自己任务的文件，他人的或不存在的文件返回 404；删除账户后链接失效。种子封面和示例图公开。
 
 **异常情况**
 | 场景 | 处理 |
@@ -361,7 +363,7 @@ stateDiagram-v2
 - 已受理的 taskId（由执行器领取）
 
 **输出**
-- 任务记录的状态/阶段变更；成功时 `resultUrl`；失败时 `failedStage` + `failureReason`
+- 任务记录的状态/阶段变更；成功时 `resultUrl`；失败时 `failedStage` + `failureCode` + `failureReason`
 
 **业务规则**
 1. 按顺序执行三个步骤，每步实现为独立单元（`[技术决策]` 建议 `TaskStep` 接口 + `TaskPipeline` 编排）：
@@ -369,11 +371,11 @@ stateDiagram-v2
    2. **模拟生成 GENERATING**：按配置延迟；
    3. **结果整理 RESULT_ORGANIZING**：生成并记录可预览的结果地址 `[待确认 OQ-08 结果图来源]`（临时默认：复制模板预置结果图到结果目录，生成任务专属 URL）。
 2. 每步开始时持久化 `status=PROCESSING, stage=<当前步>`；每步可配置模拟耗时。
-3. 任一步抛出异常或命中模拟失败：持久化 `status=FAILED, failedStage=<当前步>, failureReason=<可读原因>, finishedAt`，**不执行后续步骤**。
+3. 任一步抛出异常或命中模拟失败：持久化 `status=FAILED, failedStage=<当前步>, failureCode=<失败分类>, failureReason=<可读原因>, finishedAt`，**不执行后续步骤**。
 4. 全部成功：持久化 `status=SUCCEEDED, resultUrl, finishedAt`。
 5. 所有状态写入使用**条件更新**（如 `UPDATE ... WHERE id=? AND status IN ('PENDING','PROCESSING')`），保证终态不可被覆盖。
 6. 工作线程中的未预期异常必须被捕获并落为 FAILED，不得让任务永远停留在 PROCESSING（服务重启场景除外，见 F-20）。
-7. `failureReason` 面向用户可读 `[待确认 OQ-11 文案规范]`；技术堆栈只写日志。
+7. `failureReason` 面向用户可读 `[待确认 OQ-11 文案规范]`；同时记录机器可读的 `failureCode`（DQ-03 已确认，取值见 api.yaml `FailureCode`）；技术堆栈只写日志。
 8. 每次条件更新都检查影响行数：为 0 说明任务已被外部结束（如删除账户时废弃，F-28），执行器立即停止，不执行后续步骤、不写结果。
 
 **异常情况**
@@ -399,7 +401,7 @@ stateDiagram-v2
 - （P1，F-21）批量：taskId 列表
 
 **输出**
-- 任务视图：`{ taskId, templateId, templateTitle, templateCoverUrl, status, stage, failedStage, failureReason, resultUrl, inputAssets: [{slotIndex, url}], createdAt, updatedAt, finishedAt }`（"我的记录"页要展示模板信息，所以模板标题和封面为必返字段）
+- 任务视图：`{ taskId, templateId, templateTitle, templateCoverUrl, status, stage, failedStage, failureCode, failureReason, resultUrl, inputAssets: [{slotIndex, url}], createdAt, updatedAt, finishedAt }`（"我的记录"页要展示模板信息，所以模板标题和封面为必返字段）
 - 历史列表：任务视图数组，按 `createdAt` 倒序 `[待确认 OQ-09 余项：是否分页]`
 
 **业务规则**
@@ -438,7 +440,7 @@ stateDiagram-v2
 3. 配置入口放在后端配置或开发接口，**不出现在正式页面或模板字段**（R-06.2）。
 4. `[技术决策]` 建议同时提供：
    - `application.yml` 默认值（`simulation.stage-durations.*`、`simulation.fail-stage`），可由环境变量覆盖；
-   - 仅在 `dev`/`demo` profile 启用的开发接口 `GET/PUT /api/dev/simulation`，运行时修改无需重启。
+   - 仅在 `dev`/`demo` profile 启用的开发接口 `GET/PUT /api/dev/simulation`，运行时修改无需重启；不需要登录，便于 curl 演示（DQ-01 已确认）。
 5. 配置粒度（全局 / 按任务 / 按模板）`[待确认 OQ-10]`（临时默认：全局配置，任务创建时快照）。
 6. 不要求用户重新执行失败任务（R-06.2）。
 
@@ -596,7 +598,8 @@ stateDiagram-v2
 | --- | --- |
 | 用户名已被注册（含已删除账户的用户名，按 OQ-31 临时默认） | 注册返回 409，提示"用户名已被使用" |
 | 邮箱已被未删除的账户使用 | 注册返回 409，提示"邮箱已被使用" |
-| 用户名、邮箱或密码不符合规则 / 两次密码不一致 | 前端拦截；服务端返回 400 |
+| 用户名、邮箱或密码不符合规则 | 前端拦截；服务端返回 400 |
+| 两次密码不一致 | 只在前端拦截，不发请求；接口不接收"确认密码"（DQ-04 已确认） |
 | 用户名或密码错误 | 401，统一提示 |
 | 会话缺失或过期 | 401，前端跳转登录并清空用户数据 |
 | 账户已删除 | 无法登录，提示同"用户名或密码错误" |
@@ -635,10 +638,10 @@ stateDiagram-v2
 3. **删除账户的二次确认**（OQ-26 已确认）：点击删除后弹出确认对话框，用户在输入框中输入 `DELETE` 后，确认按钮才可用。
    - 大小写是否必须完全一致 `[待确认 OQ-26 余项]`（临时默认：必须完全一致，区分大小写，不去除首尾空格）；
    - 服务端也要校验确认文字，不能只靠前端（`[技术决策]`）。
-4. **数据保留**（OQ-26 已确认）：删除账户后，用户记录、任务记录、上传素材、结果文件都保留在库中（软删除，用户记 `deletedAt`），但该账户无法再登录，任何人都不能通过界面或接口访问这些数据。
+4. **数据保留**（OQ-26 已确认）：删除账户后，用户记录、任务记录、上传素材、结果文件都保留在库中（软删除，用户记 `deletedAt`），但该账户无法再登录，任何人都不能通过界面或接口访问这些数据，包括此前拿到的素材和结果图链接（DQ-02 已确认：链接失效）。
 5. **正在跑的任务废弃**（OQ-26 已确认）：删除时该用户所有 PENDING / PROCESSING 的任务立即结束，不再执行后续步骤。
    - `[技术决策]` 实现方式：在删除账户的同一事务中，用条件更新把这些任务改为终态；执行器在下一个阶段开始前（`markProcessing`）或写结果时（`markSucceeded`）发现更新影响行数为 0，就停止。正在执行的那一步会执行完，但结果不会写入。
-   - 废弃后的任务记为什么状态 `[待确认 OQ-26 余项]`（临时默认：`FAILED`，`failedStage` 为废弃时所处的阶段，`failureReason` = "账户已删除，任务已废弃"；不新增状态）。
+   - 废弃后的任务记为什么状态 `[待确认 OQ-26 余项]`（临时默认：`FAILED`，`failedStage` 为废弃时所处的阶段，`failureCode` = `ACCOUNT_DELETED`，`failureReason` = "账户已删除，任务已废弃"；不新增状态）。
 6. **重新注册**（2026-11-04 补充确认，替代此前"不能重复注册"的理解）：账户删除后，**相同邮箱可以再注册**新账户；新账户与旧账户无关，看不到旧数据。已删除账户的**用户名**能否再用 `[待确认 OQ-31]`（临时默认：不能）。
 7. 删除成功后，服务端作废该用户的全部会话；前端执行与退出相同的清理（取消请求、清空状态），并跳转到首页。
 
@@ -654,7 +657,8 @@ stateDiagram-v2
 | 场景 | 处理 |
 | --- | --- |
 | 当前密码错误 | 400 / 401，提示"当前密码不正确"，不改密码 |
-| 新密码不符合规则或两次不一致 | 前端拦截；服务端返回 400 |
+| 新密码不符合规则 | 前端拦截；服务端返回 400 |
+| 两次新密码不一致 | 只在前端拦截，不发请求（DQ-04 已确认） |
 | 确认文字不是 `DELETE` | 确认按钮不可用；绕过前端时服务端返回 400 |
 | 删除时取消 / 关闭对话框 | 不发请求 |
 | 删除请求失败（网络 / 5xx） | 提示失败，账户保持原状，仍处于登录状态，任务不受影响 |
@@ -667,6 +671,7 @@ stateDiagram-v2
 - [ ] 用 curl 发送错误的确认文字，服务端拒绝。
 - [ ] 将每阶段耗时设为 10s，提交一个任务后立即删除账户：数据库中该任务最终为废弃状态，没有进入后续阶段，也没有写入 resultUrl。
 - [ ] 删除后自动退出，该账户无法再登录；数据库中该用户的任务和文件仍然存在。
+- [ ] 删除前记下的素材和结果图链接，删除后无论是否登录其他账户都无法打开（DQ-02）。
 - [ ] 用已删除账户的邮箱 + 新用户名注册成功，新账户看不到旧数据。
 - [ ] 用已删除账户的用户名注册，提示用户名已被使用（按 OQ-31 临时默认）。
 - [ ] 其他用户的数据和正在执行的任务不受影响。
@@ -802,8 +807,9 @@ PRD 不要求重启后自动恢复执行，但要求 README 说明该边界。�
 | GET | `/api/tasks/{taskId}` | 单任务状态 | F-07 |
 | GET | `/api/tasks?templateId=` | 当前用户历史：带 templateId 用于详情页，不带用于"我的记录"页 | F-07/F-11 |
 | GET | `/api/tasks?ids=a,b,c` | 批量状态（P1） | F-21 |
-| GET/PUT | `/api/dev/simulation` | 模拟配置（仅 dev profile） | F-08 |
-| GET | `/files/**` | 上传素材、结果图、种子封面静态访问 | F-03/F-13 |
+| GET/PUT | `/api/dev/simulation` | 模拟配置（仅 dev/demo profile，不需要登录，DQ-01） | F-08 |
+| GET | `/files/seed/**` | 种子封面、示例图（公开） | F-13 |
+| GET | `/files/uploads/**`、`/files/results/**` | 上传素材、结果图（需登录，仅本人，DQ-02） | F-03/F-28 |
 
 统一错误结构：`{ "code": "TEMPLATE_NOT_FOUND", "message": "模板不存在", "details": {...} }`。
 
@@ -813,7 +819,7 @@ PRD 不要求重启后自动恢复执行，但要求 README 说明该边界。�
 | --- | --- |
 | 一致性 | 任务状态转换由后端单点驱动；条件更新保证终态不可变 |
 | 可观察性 | 后端日志记录每个任务每个阶段的开始/结束/失败（含 taskId）；P1 落 TaskStepLog |
-| 安全 | 资源按用户隔离；密码慢哈希存储，日志不记录密码；会话 Cookie 设 HttpOnly / SameSite；上传文件随机命名、限制类型/大小、禁止路径穿越；开发接口仅 dev profile；仓库不含真实凭据（演示账户密码除外，并在 README 标明仅供演示） |
+| 安全 | 资源按用户隔离；密码慢哈希存储，日志不记录密码；会话 Cookie 设 HttpOnly / SameSite；上传文件随机命名、限制类型/大小、禁止路径穿越，用户文件仅本人可访问（DQ-02）；开发接口仅 dev profile；仓库不含真实凭据（演示账户密码除外，并在 README 标明仅供演示） |
 | 性能 | 提交接口不受模拟耗时影响；轮询间隔合理，无未结束任务时零轮询 |
 | 可移植 | 通过 Compose 在任意装有 Docker 的机器运行；配置通过环境变量覆盖 |
 | 兼容 | 现代桌面浏览器（Chrome/Edge/Firefox/Safari 最新两版）；小屏可操作 |

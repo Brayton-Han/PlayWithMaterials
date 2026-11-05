@@ -1,0 +1,1030 @@
+openapi: 3.1.0
+info:
+  title: 素材制作网站 API
+  version: 0.1.0
+  description: |
+    前后端唯一契约。前端类型由本文件生成（openapi-typescript），后端 Controller 只收发这里定义的 DTO。
+    设计说明见 docs/architecture.md，数据结构见 docs/database.md，需求编号（F-xx / R-xx / OQ-xx）见 docs/requirements.md。
+
+    ## 访问方式
+    浏览器只访问前端域名；Next.js rewrites 把 `/api/**` 与 `/files/**` 转发给 Java（同源，无 CORS）。
+    本地直连后端调试时 server 为 `http://localhost:8080`。
+
+    ## 认证（F-12）
+    - 登录 / 注册成功后，服务端通过 `Set-Cookie: sid=<token>; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800` 下发会话。
+    - 后续请求由浏览器自动携带 Cookie。数据库只保存令牌的 SHA-256 哈希。
+    - 标注 `security: [cookieAuth]` 的接口在会话缺失、过期或账户已删除时返回 `401 UNAUTHENTICATED`。
+    - 没有 `security` 的接口允许匿名访问。
+
+    ## 数据访问边界
+    - 用户只能访问自己的任务；他人或不存在的任务一律返回 `404 TASK_NOT_FOUND`，不暴露存在性。
+    - 用户素材和结果图（`/files/uploads/**`、`/files/results/**`）同样需要登录且只返回本人的文件；删除账户后这些链接失效（DQ-02 已确认）。种子图 `/files/seed/**` 公开。
+    - `/api/account*` 没有路径参数，只能操作当前登录用户。
+
+    ## 统一错误格式
+    所有 4xx / 5xx 响应体均为 `ErrorResponse`：
+    `{ "code": "<稳定的机器可读码>", "message": "<可直接展示的中文>", "details": { ... } }`。
+    前端按 `code` 分支，不解析 `message`。
+
+    | HTTP | code | 场景 |
+    | --- | --- | --- |
+    | 400 | VALIDATION_FAILED | 请求体 / 参数格式或规则不符，`details.fieldErrors` 给出字段 |
+    | 400 | IMAGE_COUNT_MISMATCH | 上传图片数量 ≠ 模板要求，`details.expected` / `details.actual` |
+    | 400 | ASSET_VALIDATION_FAILED | 某些文件类型 / 大小 / 空文件不符，`details.fieldErrors[].slotIndex` |
+    | 400 | CURRENT_PASSWORD_INCORRECT | 修改密码时当前密码错误（用 400 而非 401，避免触发前端的全局"会话失效"处理） |
+    | 400 | CONFIRM_TEXT_MISMATCH | 删除账户确认文字不是 `DELETE` |
+    | 401 | UNAUTHENTICATED | 需要登录的接口没有有效会话 |
+    | 401 | INVALID_CREDENTIALS | 登录用户名或密码错误（含账户已删除），统一提示 |
+    | 404 | TEMPLATE_NOT_FOUND | 模板不存在 |
+    | 404 | TASK_NOT_FOUND | 任务不存在或不属于当前用户 |
+    | 404 | NOT_FOUND | 路由不存在（含非 dev/demo profile 下的 /api/dev/**） |
+    | 405 | METHOD_NOT_ALLOWED | 方法不支持 |
+    | 409 | USERNAME_TAKEN | 用户名已被使用（含已删除账户，OQ-31 临时默认） |
+    | 409 | EMAIL_TAKEN | 邮箱已被未删除的账户使用 |
+    | 413 | PAYLOAD_TOO_LARGE | 单文件超过全局上限或请求体超过上限（OQ-18） |
+    | 415 | UNSUPPORTED_MEDIA_TYPE | Content-Type 不被接口接受 |
+    | 500 | INTERNAL_ERROR | 未预期错误；不返回堆栈 |
+    | 503 | QUEUE_FULL | 执行器队列已满，未创建任务（OQ-12 临时默认） |
+
+    ## 通用约定
+    - ID：`userId`、`taskId` 以字符串输出；`categoryId`、`templateId` 为 slug。
+    - 时间：ISO-8601 UTC，毫秒精度，如 `2026-11-04T08:30:00.123Z`。
+    - 列表：统一包装为 `{ "items": [...] }`。
+    - 文件 URL：站内相对路径（`/files/...`）。
+    - `slotIndex`：从 0 开始，与 multipart `files` 的顺序一致。
+    - 任务状态只由后端执行器推进；所有 GET 接口都是只读的（R-05.2）。
+servers:
+  - url: /
+    description: 经 Next.js 同源代理（浏览器）
+  - url: http://localhost:8080
+    description: 本地直连后端（curl 调试）
+
+tags:
+  - name: auth
+    description: 注册、登录、退出、当前用户（F-12）
+  - name: account
+    description: 账户设置：修改密码、删除账户（F-28）
+  - name: catalog
+    description: 分类与模板，匿名可访问（F-01、F-02）
+  - name: tasks
+    description: 制作任务提交与查询（F-03 ~ F-07、F-11）
+  - name: dev
+    description: 模拟控制，仅 dev / demo profile（F-08）
+  - name: files
+    description: 静态文件（种子图、用户素材、结果图）
+  - name: ops
+    description: 运维
+
+paths:
+  /api/auth/register:
+    post:
+      tags: [auth]
+      operationId: register
+      summary: 注册并登录
+      description: |
+        自助注册（OQ-23）。成功后直接建立会话。
+        - 用户名：3 ~ 20 位字母、数字、下划线，不区分大小写判重，包含已删除账户（OQ-29、OQ-31 临时默认）。
+        - 邮箱：只校验格式，不区分大小写，仅在未删除账户中唯一；注册后不可修改（2026-11-04 确认）。
+        - 密码：8 ~ 64 位（OQ-24 临时默认）。
+        - 已登录状态下调用会替换当前会话。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201':
+          description: 注册成功，已登录
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetSessionCookie' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '409':
+          description: 用户名或邮箱已被使用
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                usernameTaken:
+                  value: { code: USERNAME_TAKEN, message: 用户名已被使用 }
+                emailTaken:
+                  value: { code: EMAIL_TAKEN, message: 邮箱已被使用 }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: 用户名 + 密码登录
+      description: 邮箱不能用于登录。用户不存在、密码错误、账户已删除都返回相同的 401。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: 登录成功
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetSessionCookie' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401':
+          description: 用户名或密码错误
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example: { code: INVALID_CREDENTIALS, message: 用户名或密码错误 }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: 退出登录
+      description: 删除当前会话并清除 Cookie。幂等：没有会话时也返回 204。
+      responses:
+        '204':
+          description: 已退出
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/ClearSessionCookie' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/auth/me:
+    get:
+      tags: [auth]
+      operationId: getCurrentUser
+      summary: 当前登录用户
+      description: 前端用于判断登录状态；此接口返回的 401 表示"未登录"，前端不做跳转。
+      security: [cookieAuth: []]
+      responses:
+        '200':
+          description: 当前用户
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/account/password:
+    put:
+      tags: [account]
+      operationId: changePassword
+      summary: 修改密码（登录后）
+      description: |
+        需要当前密码（OQ-25 余项临时默认）。成功后作废该用户除当前会话外的全部会话，当前会话保留。
+        不提供"忘记密码"（OQ-25 已确认）。
+      security: [cookieAuth: []]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangePasswordRequest' }
+      responses:
+        '204': { description: 修改成功 }
+        '400':
+          description: 参数不合法或当前密码错误
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                wrongCurrent:
+                  value: { code: CURRENT_PASSWORD_INCORRECT, message: 当前密码不正确 }
+                weakPassword:
+                  value:
+                    code: VALIDATION_FAILED
+                    message: 请求参数不合法
+                    details:
+                      fieldErrors:
+                        - { field: newPassword, code: LENGTH, message: 密码长度需为 8 ~ 64 位 }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/account:
+    delete:
+      tags: [account]
+      operationId: deleteAccount
+      summary: 删除当前账户
+      description: |
+        OQ-26 已确认：
+        - `confirmText` 必须完全等于 `DELETE`（区分大小写、不去空格，余项临时默认），服务端校验；
+        - 软删除：用户、任务、素材、结果文件全部保留，但不再能通过任何接口访问；
+        - 该用户所有 PENDING / PROCESSING 任务在同一事务中改为 `FAILED`，`failureCode=ACCOUNT_DELETED`；
+        - 作废该用户全部会话，清除 Cookie；
+        - 删除后同一邮箱可以再注册；用户名不能再用（OQ-31 临时默认）。
+      security: [cookieAuth: []]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeleteAccountRequest' }
+      responses:
+        '204':
+          description: 已删除并退出
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/ClearSessionCookie' }
+        '400':
+          description: 确认文字不正确
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example: { code: CONFIRM_TEXT_MISMATCH, message: 请输入 DELETE 以确认删除 }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/categories:
+    get:
+      tags: [catalog]
+      operationId: listCategories
+      summary: 分类列表（一级）
+      description: 按 sortOrder 升序。"全部"不在结果中，由前端虚拟（OQ-03 余项临时默认）。
+      responses:
+        '200':
+          description: 分类列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryList' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/templates:
+    get:
+      tags: [catalog]
+      operationId: listTemplates
+      summary: 模板卡片列表
+      description: 不传 categoryId 返回全部。categoryId 不存在时返回空列表（前端对照分类列表回落到"全部"）。按 sortOrder 升序。
+      parameters:
+        - name: categoryId
+          in: query
+          required: false
+          schema: { type: string, maxLength: 32, examples: [creative] }
+      responses:
+        '200':
+          description: 模板卡片
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TemplateSummaryList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/templates/{templateId}:
+    get:
+      tags: [catalog]
+      operationId: getTemplate
+      summary: 模板详情
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+      responses:
+        '200':
+          description: 模板详情
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TemplateDetail' }
+        '404':
+          description: 模板不存在
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example: { code: TEMPLATE_NOT_FOUND, message: 模板不存在 }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/tasks:
+    post:
+      tags: [tasks]
+      operationId: createTask
+      summary: 提交制作任务（图片与参数一起上传）
+      description: |
+        OQ-05 已确认：点击提交时，图片和制作参数在同一个 multipart 请求中上传。
+        服务端按顺序：
+        1. 校验模板存在 → 404 TEMPLATE_NOT_FOUND；
+        2. 校验文件数量 = requiredImageCount（OQ-04 临时默认：恰好 N 张）→ 400 IMAGE_COUNT_MISMATCH；
+        3. 逐个校验非空、大小 ≤ maxFileSizeBytes、文件头魔数类型 ∈ acceptedMimeTypes（OQ-17）→ 400 ASSET_VALIDATION_FAILED（带 slotIndex）；
+        4. 保存文件，事务内创建任务（PENDING）与素材记录，快照当前模拟配置；
+        5. 派发给后台执行器；队列满时撤销任务与文件 → 503 QUEUE_FULL（OQ-12）；
+        6. 立即返回 202，不等待制作完成（R-04）。
+        任何失败都不会留下任务记录或文件。
+      security: [cookieAuth: []]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/CreateTaskForm' }
+            encoding:
+              files:
+                contentType: image/jpeg, image/png, image/webp
+      responses:
+        '202':
+          description: 已受理，任务在后台执行
+          headers:
+            Location:
+              description: 任务资源地址
+              schema: { type: string, examples: [/api/tasks/42] }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+              example:
+                taskId: '42'
+                templateId: demo-postcard
+                templateTitle: 旅行明信片
+                templateCoverUrl: /files/seed/covers/postcard.jpg
+                status: PENDING
+                stage: null
+                failedStage: null
+                failureCode: null
+                failureReason: null
+                resultUrl: null
+                inputAssets:
+                  - { slotIndex: 0, url: /files/uploads/2026/11/3f2c9a1e-7b7d-4a51-9b3e-0c1d2e3f4a5b.jpg }
+                  - { slotIndex: 1, url: /files/uploads/2026/11/8a7b6c5d-1e2f-4a3b-8c9d-0e1f2a3b4c5d.png }
+                createdAt: '2026-11-04T08:30:00.123Z'
+                updatedAt: '2026-11-04T08:30:00.123Z'
+                startedAt: null
+                finishedAt: null
+        '400':
+          description: 参数或文件校验失败
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                missingTemplateId:
+                  value:
+                    code: VALIDATION_FAILED
+                    message: 请求参数不合法
+                    details:
+                      fieldErrors:
+                        - { field: templateId, code: REQUIRED, message: 缺少模板 ID }
+                countMismatch:
+                  value:
+                    code: IMAGE_COUNT_MISMATCH
+                    message: 该模板需要上传 2 张图片
+                    details: { expected: 2, actual: 1 }
+                badFile:
+                  value:
+                    code: ASSET_VALIDATION_FAILED
+                    message: 部分图片不符合要求
+                    details:
+                      fieldErrors:
+                        - { field: files, slotIndex: 1, code: FILE_TYPE_NOT_ACCEPTED, message: 第 2 张图片格式不支持，仅支持 JPEG、PNG }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404':
+          description: 模板不存在
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example: { code: TEMPLATE_NOT_FOUND, message: 模板不存在 }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503':
+          description: 执行器繁忙，任务未创建，可稍后重试
+          headers:
+            Retry-After:
+              schema: { type: integer, examples: [5] }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example: { code: QUEUE_FULL, message: 当前制作任务较多，请稍后再试 }
+
+    get:
+      tags: [tasks]
+      operationId: listTasks
+      summary: 当前用户的任务历史
+      description: |
+        只返回当前用户的任务，按 createdAt 倒序（同一时间再按 taskId 倒序），不分页（OQ-09 余项临时默认）。
+        - 详情页 History：传 `templateId`，只返回该模板的任务；
+        - "我的记录"页：不传参数，返回全部模板的任务；
+        - 批量状态查询（P1，F-21 / T-073）：传 `ids`，返回其中属于当前用户的任务，不存在或不属于当前用户的 ID 直接省略。`ids` 与 `templateId` 不能同时使用。
+        纯只读，不会推进任何任务状态。templateId 不存在时返回空列表。
+      security: [cookieAuth: []]
+      parameters:
+        - name: templateId
+          in: query
+          required: false
+          schema: { type: string, maxLength: 64, examples: [demo-postcard] }
+        - name: ids
+          in: query
+          required: false
+          description: P1。逗号分隔的 taskId，最多 50 个。
+          style: form
+          explode: false
+          schema:
+            type: array
+            maxItems: 50
+            items: { type: string, pattern: '^[0-9]{1,19}$' }
+          x-priority: P1
+      responses:
+        '200':
+          description: 任务列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/tasks/{taskId}:
+    get:
+      tags: [tasks]
+      operationId: getTask
+      summary: 单个任务状态
+      description: 纯只读。终态任务的结果稳定，不会变回处理中（R-05.3）。他人或不存在的任务返回 404。
+      security: [cookieAuth: []]
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: 任务
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+              examples:
+                processing:
+                  value:
+                    taskId: '42'
+                    templateId: demo-postcard
+                    templateTitle: 旅行明信片
+                    templateCoverUrl: /files/seed/covers/postcard.jpg
+                    status: PROCESSING
+                    stage: GENERATING
+                    failedStage: null
+                    failureCode: null
+                    failureReason: null
+                    resultUrl: null
+                    inputAssets: [{ slotIndex: 0, url: /files/uploads/2026/11/3f2c9a1e-7b7d-4a51-9b3e-0c1d2e3f4a5b.jpg }]
+                    createdAt: '2026-11-04T08:30:00.123Z'
+                    updatedAt: '2026-11-04T08:30:01.700Z'
+                    startedAt: '2026-11-04T08:30:00.150Z'
+                    finishedAt: null
+                succeeded:
+                  value:
+                    taskId: '42'
+                    templateId: demo-postcard
+                    templateTitle: 旅行明信片
+                    templateCoverUrl: /files/seed/covers/postcard.jpg
+                    status: SUCCEEDED
+                    stage: RESULT_ORGANIZING
+                    failedStage: null
+                    failureCode: null
+                    failureReason: null
+                    resultUrl: /files/results/42/5d6e7f80-1a2b-4c3d-9e8f-a0b1c2d3e4f5.png
+                    inputAssets: [{ slotIndex: 0, url: /files/uploads/2026/11/3f2c9a1e-7b7d-4a51-9b3e-0c1d2e3f4a5b.jpg }]
+                    createdAt: '2026-11-04T08:30:00.123Z'
+                    updatedAt: '2026-11-04T08:30:06.210Z'
+                    startedAt: '2026-11-04T08:30:00.150Z'
+                    finishedAt: '2026-11-04T08:30:06.210Z'
+                failed:
+                  value:
+                    taskId: '43'
+                    templateId: demo-postcard
+                    templateTitle: 旅行明信片
+                    templateCoverUrl: /files/seed/covers/postcard.jpg
+                    status: FAILED
+                    stage: GENERATING
+                    failedStage: GENERATING
+                    failureCode: SIMULATED_FAILURE
+                    failureReason: 模拟失败：生成阶段出错
+                    resultUrl: null
+                    inputAssets: [{ slotIndex: 0, url: /files/uploads/2026/11/8a7b6c5d-1e2f-4a3b-8c9d-0e1f2a3b4c5d.png }]
+                    createdAt: '2026-11-04T08:31:00.000Z'
+                    updatedAt: '2026-11-04T08:31:04.520Z'
+                    startedAt: '2026-11-04T08:31:00.020Z'
+                    finishedAt: '2026-11-04T08:31:04.520Z'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404':
+          description: 任务不存在或不属于当前用户
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              example: { code: TASK_NOT_FOUND, message: 任务不存在 }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/dev/simulation:
+    get:
+      tags: [dev]
+      operationId: getSimulationConfig
+      summary: 查看当前模拟配置
+      description: |
+        仅在 dev / demo profile 下注册；其他 profile 下返回 404 NOT_FOUND（R-06.2）。
+        不需要登录（DQ-01 已确认）。配置只影响之后创建的任务（创建时快照，OQ-10）。
+      responses:
+        '200':
+          description: 当前配置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SimulationConfig' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [dev]
+      operationId: updateSimulationConfig
+      summary: 整体替换模拟配置
+      description: 运行时生效，不持久化；进程重启后回到 application.yml / 环境变量的值。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SimulationConfig' }
+            examples:
+              failAtGenerating:
+                value: { assetCheckMs: 1000, generatingMs: 5000, resultOrganizingMs: 1000, failStage: GENERATING, failReason: null }
+              slowSuccess:
+                value: { assetCheckMs: 10000, generatingMs: 10000, resultOrganizingMs: 10000, failStage: null, failReason: null }
+      responses:
+        '200':
+          description: 更新后的配置
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SimulationConfig' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /files/seed/{path}:
+    get:
+      tags: [files]
+      operationId: getSeedFile
+      summary: 种子封面与示例图（公开）
+      description: 静态资源（classpath:/seed/），匿名可访问。`path` 可包含多级目录。不允许目录列举与路径穿越。
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+          examples:
+            cover: { value: covers/postcard.jpg }
+      responses:
+        '200':
+          description: 文件内容
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        '404':
+          description: 文件不存在（静态资源处理器返回，响应体不保证为 ErrorResponse）
+
+  /files/uploads/{yyyy}/{mm}/{fileName}:
+    get:
+      tags: [files]
+      operationId: getUploadedFile
+      summary: 用户上传的素材（仅本人）
+      description: |
+        DQ-02 已确认：需要登录，且文件必须属于当前用户的任务；他人的、不存在的文件返回 404。
+        删除账户后该用户没有有效会话，其他人也查不到归属，链接因此失效。
+        文件路径只取自数据库记录，不拼接请求路径。响应头 `Cache-Control: private, no-store`。
+      security: [cookieAuth: []]
+      parameters:
+        - { name: yyyy, in: path, required: true, schema: { type: string, pattern: '^[0-9]{4}$' } }
+        - { name: mm, in: path, required: true, schema: { type: string, pattern: '^[0-9]{2}$' } }
+        - name: fileName
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[0-9a-f-]{36}\.(jpg|png|webp)$' }
+      responses:
+        '200': { $ref: '#/components/responses/UserFile' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /files/results/{taskId}/{fileName}:
+    get:
+      tags: [files]
+      operationId: getResultFile
+      summary: 任务结果图（仅本人）
+      description: |
+        DQ-02 已确认：需要登录，且 `taskId` 属于当前用户、请求路径与该任务的 `resultUrl` 一致；否则 404。
+        响应头 `Cache-Control: private, no-store`。
+      security: [cookieAuth: []]
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+        - name: fileName
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[0-9a-f-]{36}\.(jpg|png|webp)$' }
+      responses:
+        '200': { $ref: '#/components/responses/UserFile' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /actuator/health:
+    get:
+      tags: [ops]
+      operationId: health
+      summary: 健康检查
+      description: Compose 健康检查使用，只返回整体状态。
+      responses:
+        '200':
+          description: 健康
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [UP] }
+        '503':
+          description: 不健康（如数据库不可用）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [DOWN, OUT_OF_SERVICE] }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sid
+      description: 登录 / 注册时下发的 HttpOnly 会话 Cookie，固定有效期 7 天（OQ-28 临时默认）。
+
+  headers:
+    SetSessionCookie:
+      description: '`sid=<token>; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800`（部署到 https 时追加 `Secure`）'
+      schema: { type: string }
+    ClearSessionCookie:
+      description: '`sid=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`'
+      schema: { type: string }
+
+  parameters:
+    TemplateId:
+      name: templateId
+      in: path
+      required: true
+      schema: { type: string, maxLength: 64, examples: [demo-postcard] }
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      description: 非数字的 taskId 返回 400 VALIDATION_FAILED
+      schema: { type: string, pattern: '^[0-9]{1,19}$', examples: ['42'] }
+
+  responses:
+    UserFile:
+      description: 文件内容
+      headers:
+        Cache-Control:
+          schema: { type: string, examples: ['private, no-store'] }
+      content:
+        image/jpeg: { schema: { type: string, format: binary } }
+        image/png: { schema: { type: string, format: binary } }
+        image/webp: { schema: { type: string, format: binary } }
+    ValidationFailed:
+      description: 请求参数不合法
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example:
+            code: VALIDATION_FAILED
+            message: 请求参数不合法
+            details:
+              fieldErrors:
+                - { field: username, code: PATTERN, message: 用户名需为 3 ~ 20 位字母、数字或下划线 }
+    Unauthenticated:
+      description: 未登录或会话已失效
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example: { code: UNAUTHENTICATED, message: 请先登录 }
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example: { code: NOT_FOUND, message: 资源不存在 }
+    PayloadTooLarge:
+      description: 请求体或单个文件超过全局上限
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example:
+            code: PAYLOAD_TOO_LARGE
+            message: 上传内容过大，单张图片不超过 5 MB，总大小不超过 20 MB
+            details: { maxFileSizeBytes: 5242880, maxRequestSizeBytes: 20971520 }
+    UnsupportedMediaType:
+      description: Content-Type 不被接受
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example: { code: UNSUPPORTED_MEDIA_TYPE, message: 请求格式不支持 }
+    InternalError:
+      description: 服务器内部错误
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example: { code: INTERNAL_ERROR, message: 服务器开小差了，请稍后重试 }
+
+  schemas:
+    # ---------- 错误 ----------
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          description: 可直接展示给用户的中文说明
+        details:
+          type: object
+          description: 可选的结构化补充信息；按 code 不同包含不同字段
+          properties:
+            fieldErrors:
+              type: array
+              items: { $ref: '#/components/schemas/FieldError' }
+            expected: { type: integer, description: IMAGE_COUNT_MISMATCH 时的要求张数 }
+            actual: { type: integer, description: IMAGE_COUNT_MISMATCH 时的实际张数 }
+            maxFileSizeBytes: { type: integer }
+            maxRequestSizeBytes: { type: integer }
+          additionalProperties: true
+
+    ErrorCode:
+      type: string
+      enum:
+        - VALIDATION_FAILED
+        - IMAGE_COUNT_MISMATCH
+        - ASSET_VALIDATION_FAILED
+        - CURRENT_PASSWORD_INCORRECT
+        - CONFIRM_TEXT_MISMATCH
+        - UNAUTHENTICATED
+        - INVALID_CREDENTIALS
+        - TEMPLATE_NOT_FOUND
+        - TASK_NOT_FOUND
+        - NOT_FOUND
+        - METHOD_NOT_ALLOWED
+        - USERNAME_TAKEN
+        - EMAIL_TAKEN
+        - PAYLOAD_TOO_LARGE
+        - UNSUPPORTED_MEDIA_TYPE
+        - INTERNAL_ERROR
+        - QUEUE_FULL
+
+    FieldError:
+      type: object
+      required: [field, code, message]
+      additionalProperties: false
+      properties:
+        field:
+          type: string
+          description: 出错的请求字段名，文件为 `files`
+          examples: [username, files]
+        slotIndex:
+          type: integer
+          minimum: 0
+          description: 仅文件错误时出现，从 0 开始
+        code:
+          type: string
+          description: 字段级错误码
+          enum:
+            - REQUIRED
+            - PATTERN
+            - LENGTH
+            - FORMAT
+            - FILE_EMPTY
+            - FILE_TOO_LARGE
+            - FILE_TYPE_NOT_ACCEPTED
+            - OUT_OF_RANGE
+            - INVALID_VALUE
+        message:
+          type: string
+
+    # ---------- 身份 ----------
+    User:
+      type: object
+      required: [userId, username, email, createdAt]
+      additionalProperties: false
+      properties:
+        userId: { type: string, examples: ['1'] }
+        username: { type: string, examples: [demo1] }
+        email: { type: string, format: email, examples: [demo1@example.com] }
+        createdAt: { type: string, format: date-time }
+
+    RegisterRequest:
+      type: object
+      required: [username, email, password]
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+          pattern: '^[A-Za-z0-9_]{3,20}$'
+          description: OQ-29 临时默认
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: OQ-30 临时默认；注册后不可修改
+        password:
+          type: string
+          minLength: 8
+          maxLength: 64
+          format: password
+          description: OQ-24 临时默认；"确认密码"只在前端校验，接口不接收（DQ-04 已确认）
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      additionalProperties: false
+      properties:
+        username: { type: string, minLength: 1, maxLength: 20 }
+        password: { type: string, minLength: 1, maxLength: 64, format: password }
+
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      additionalProperties: false
+      properties:
+        currentPassword: { type: string, minLength: 1, maxLength: 64, format: password }
+        newPassword: { type: string, minLength: 8, maxLength: 64, format: password }
+
+    DeleteAccountRequest:
+      type: object
+      required: [confirmText]
+      additionalProperties: false
+      properties:
+        confirmText:
+          type: string
+          description: 必须完全等于 `DELETE`（区分大小写，不去空格）；其他值返回 400 CONFIRM_TEXT_MISMATCH
+          examples: [DELETE]
+
+    # ---------- 目录 ----------
+    Category:
+      type: object
+      required: [categoryId, name, sortOrder]
+      additionalProperties: false
+      properties:
+        categoryId: { type: string, examples: [creative] }
+        name: { type: string, examples: [创意图片] }
+        sortOrder: { type: integer }
+
+    CategoryList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Category' }
+
+    TemplateSummary:
+      type: object
+      description: 列表卡片字段（F-01）
+      required: [templateId, title, categoryId, coverUrl]
+      additionalProperties: false
+      properties:
+        templateId: { type: string, examples: [demo-postcard] }
+        title: { type: string, examples: [旅行明信片] }
+        categoryId: { type: string, examples: [creative] }
+        coverUrl: { type: string, examples: [/files/seed/covers/postcard.jpg] }
+
+    TemplateSummaryList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/TemplateSummary' }
+
+    TemplateDetail:
+      type: object
+      description: 详情与素材要求（F-02）。不包含预置结果图路径。
+      required: [templateId, title, description, categoryId, categoryName, coverUrl, requiredImageCount, acceptedMimeTypes, maxFileSizeBytes]
+      additionalProperties: false
+      properties:
+        templateId: { type: string, examples: [demo-postcard] }
+        title: { type: string, examples: [旅行明信片] }
+        description: { type: string, examples: [上传图片，模拟生成一张明信片] }
+        categoryId: { type: string, examples: [creative] }
+        categoryName: { type: string, examples: [创意图片] }
+        coverUrl: { type: string, examples: [/files/seed/covers/postcard.jpg] }
+        requiredImageCount:
+          type: integer
+          minimum: 1
+          maximum: 9
+          description: 需要恰好这么多张图片（OQ-04 临时默认）
+          examples: [2]
+        acceptedMimeTypes:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [image/jpeg, image/png, image/webp] }
+          examples: [[image/jpeg, image/png]]
+        maxFileSizeBytes:
+          type: integer
+          minimum: 1
+          examples: [5242880]
+
+    # ---------- 任务 ----------
+    CreateTaskForm:
+      type: object
+      required: [templateId, files]
+      properties:
+        templateId:
+          type: string
+          maxLength: 64
+        files:
+          type: array
+          description: 按上传位顺序排列，第 i 个文件对应 slotIndex = i
+          minItems: 1
+          items: { type: string, format: binary }
+
+    TaskStatus:
+      type: string
+      description: 整体状态。SUCCEEDED / FAILED 为终态，之后不再变化。
+      enum: [PENDING, PROCESSING, SUCCEEDED, FAILED]
+
+    TaskStage:
+      type: string
+      description: 执行阶段，严格按 ASSET_CHECK → GENERATING → RESULT_ORGANIZING 顺序
+      enum: [ASSET_CHECK, GENERATING, RESULT_ORGANIZING]
+
+    FailureCode:
+      type: string
+      description: 失败分类，与 failureReason 一起返回（OQ-11；DQ-03 已确认）
+      enum:
+        - SIMULATED_FAILURE      # 模拟配置指定的阶段失败
+        - ASSET_MISSING          # 素材检查：文件或记录缺失
+        - ASSET_INVALID          # 素材检查：类型 / 大小复核不通过
+        - RESULT_WRITE_FAILED    # 结果整理：写结果文件失败
+        - ACCOUNT_DELETED        # 账户删除时被废弃（OQ-26）
+        - INTERNAL_ERROR         # 未预期异常兜底
+
+    InputAsset:
+      type: object
+      required: [slotIndex, url]
+      additionalProperties: false
+      properties:
+        slotIndex: { type: integer, minimum: 0 }
+        url: { type: string, examples: [/files/uploads/2026/11/3f2c9a1e-7b7d-4a51-9b3e-0c1d2e3f4a5b.jpg] }
+
+    Task:
+      type: object
+      description: |
+        任务视图（F-07）。字段取值规则：
+        - PENDING：stage = null；
+        - PROCESSING：stage 为当前阶段；
+        - SUCCEEDED：resultUrl 非空，finishedAt 非空；
+        - FAILED：failureCode、failureReason 非空，finishedAt 非空；failedStage 为失败阶段（仅在任务还未开始就被废弃时为 null）。
+        终态下 stage 保留最后所处阶段，前端展示应以 failedStage / resultUrl 为准。
+      required: [taskId, templateId, templateTitle, templateCoverUrl, status, stage, failedStage, failureCode, failureReason, resultUrl, inputAssets, createdAt, updatedAt, startedAt, finishedAt]
+      additionalProperties: false
+      properties:
+        taskId: { type: string, examples: ['42'] }
+        templateId: { type: string }
+        templateTitle: { type: string, description: 我的记录页展示所需 }
+        templateCoverUrl: { type: string }
+        status: { $ref: '#/components/schemas/TaskStatus' }
+        stage:
+          oneOf:
+            - { $ref: '#/components/schemas/TaskStage' }
+            - { type: 'null' }
+        failedStage:
+          oneOf:
+            - { $ref: '#/components/schemas/TaskStage' }
+            - { type: 'null' }
+        failureCode:
+          oneOf:
+            - { $ref: '#/components/schemas/FailureCode' }
+            - { type: 'null' }
+        failureReason:
+          type: [string, 'null']
+          description: 用户可读的中文失败原因
+        resultUrl:
+          type: [string, 'null']
+          description: 成功后的结果图地址
+        inputAssets:
+          type: array
+          description: 按 slotIndex 升序
+          items: { $ref: '#/components/schemas/InputAsset' }
+        createdAt: { type: string, format: date-time }
+        updatedAt:
+          type: string
+          format: date-time
+          description: 前端单调合并时用于丢弃更旧的响应
+        startedAt: { type: [string, 'null'], format: date-time }
+        finishedAt: { type: [string, 'null'], format: date-time }
+
+    TaskList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Task' }
+
+    # ---------- 模拟 ----------
+    SimulationConfig:
+      type: object
+      required: [assetCheckMs, generatingMs, resultOrganizingMs, failStage, failReason]
+      additionalProperties: false
+      properties:
+        assetCheckMs: { type: integer, minimum: 0, maximum: 60000, examples: [1500] }
+        generatingMs: { type: integer, minimum: 0, maximum: 60000, examples: [3000] }
+        resultOrganizingMs: { type: integer, minimum: 0, maximum: 60000, examples: [1500] }
+        failStage:
+          description: 指定失败阶段；null 表示不失败
+          oneOf:
+            - { $ref: '#/components/schemas/TaskStage' }
+            - { type: 'null' }
+        failReason:
+          type: [string, 'null']
+          maxLength: 200
+          description: 自定义失败原因；null 时使用按阶段的默认文案，如"模拟失败：生成阶段出错"
