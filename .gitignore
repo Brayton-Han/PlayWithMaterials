@@ -1,0 +1,26 @@
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.iml
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+frontend/next-env.d.ts
+frontend/*.tsbuildinfo
+
+# Backend
+backend/target/
+backend/data/
+
+# Local runtime data (storage volume, logs)
+data/
+*.log
