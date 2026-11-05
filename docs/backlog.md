@@ -153,6 +153,7 @@ flowchart TD
 - **受 OQ 影响**：OQ-23 余项（未登录时详情页的呈现）、OQ-24、OQ-29、OQ-30
 - **完成定义**：可以注册、登录 A → 退出 → 登录 B；切换后页面不残留 A 的数据；单测验证退出时 store 被清空。
 - **相关**：F-12, F-10
+- **状态**：Done（2026-11-05）。前端 68 个单测通过（新增 `AuthProvider.test.tsx` 9、`LoginForm.test.tsx` 7、`RegisterForm.test.tsx` 15、`UserMenu.test.tsx` 4、`RequireAuth.test.tsx` 4、`session.test.ts` 15，`client.test.ts` 新增 4）：me 401 → anonymous 且不跳转；登录 / 退出 epoch 递增；A → 退出 → B 时在途请求被取消、模块级 store（经 `onUserScopeReset` 注册）与组件本地状态被清空；业务接口 401 → 清理并 `router.replace('/login?next=…')`；迟到的 me 响应被丢弃；表单校验 / 409 / 400 字段映射；`next` 拒绝站外地址。`lint`、`typecheck`、`build` 通过。`docker compose up --build` 后用 headless Chrome 走通：匿名访问 `/records`、`/account` 跳转登录并回跳；错误密码统一提示；登录 demo1 → 菜单 → 退出 → 登录 demo2，页面不含 demo1；注册（不一致密码拦截、已占用用户名提示、成功后自动登录）。说明：T-050 尚未实现，taskStore 届时需调用 `onUserScopeReset(() => store.reset())` 接入退出清理，并在写入前用 `isCurrentEpoch` 校验；`/records`、`/account` 目前是带守卫的占位页（内容见 T-055、T-013）；`LoginPrompt` 已提供，详情页接入在 T-023；退出后停留在当前页（受保护页由守卫跳转登录），`/me` 网络失败时按未登录处理。
 
 #### T-012 后端账户设置：修改密码、删除账户 · M · P0
 - **范围**：
@@ -190,12 +191,14 @@ flowchart TD
 - **依赖**：T-020, T-011
 - **完成定义**：F-01 验收标准通过；组件测试覆盖空态、错误态，以及快速切换分类时结果不错乱。
 - **相关**：F-01
+- **状态**：Done（2026-11-05）。`TemplateListPage.test.tsx`（10，MSW）通过：加载占位 → 分类与卡片来自接口；卡片链接 `/templates/{id}`；筛选与 `?category=` 双向同步（含初始 URL、前进后退）、切回"全部"恢复完整列表；快速切换时较慢的旧响应不覆盖新结果且旧请求被 abort；空态；分类 / 模板接口失败 → 错误 + 重试后恢复（不回退到静态数据）；未知分类回落"全部"并提示，且不发给后端；封面加载失败显示占位、标题仍可点。前端 78 个单测、`lint`、`typecheck`、`build` 通过。`docker compose up --build` 后用 headless Chrome 渲染 `/`、`?category=portrait`、`?category=festival`（单分类）、`?category=nope`（回落 + 提示）结果正确，4 个封面经 :3000 均 200 `image/jpeg`；停止 backend 容器后页面显示错误 + 重试、无卡片。说明：URL 用原生 `history.pushState` 写入（Next.js 同步到 `useSearchParams`，不触发服务端往返）；先取分类再按其决定实际筛选的分类，因此未知 / 超长 categoryId 不会发给后端；卡片点击后的详情页由 T-023 提供（当前为 404）；真实浏览器中的点击切换未做自动化验证（由组件测试覆盖）；首页不再显示骨架期的 `BackendStatus`（组件与测试保留）。
 
 #### T-023 模板详情页骨架 · S · P0
 - **范围**：`/templates/[id]`：返回按钮、标题、封面、描述、素材要求；左右两栏布局（右栏 History 由 T-052 填充）；404 页面、加载与错误态（区分"不存在"和"请求失败"）。
 - **依赖**：T-020
 - **完成定义**：F-02 验收标准通过。
 - **相关**：F-02
+- **状态**：Done（2026-11-05）。`TemplateDetailPage.test.tsx`（17，MSW）通过：加载占位期间无上传位 → 标题 / 分类 / 描述 / 封面来自接口；素材要求（张数、格式、单张上限）来自接口；已登录时上传位占位数量 = `requiredImageCount`（1/2/3）、右栏 History 占位；匿名时上传区与 History 均替换为"登录后即可制作"，登录 / 注册链接带 `next=/templates/{id}`，且不强制跳转；404 `TEMPLATE_NOT_FOUND` → "模板不存在" + 返回列表（无重试）；超长 / 含特殊字符的 ID 编码后请求、按不存在处理；500、网络错误、无错误码的 404（代理 HTML）→ "模板加载失败" + 重试（不显示为不存在），重试后恢复；返回链接保留列表页的分类筛选，直接打开时回到 `/`。`TemplateListPage.test.tsx` 新增 1 项（记住已确认的分类，未知分类不记录）。前端 96 个单测、`lint`、`typecheck`、`build` 通过。dev 栈与 `docker compose up --build` 下用 headless Chrome 渲染 4 个种子模板（1/2/3 张、PNG-only 1 MB）与 `/templates/nope`，内容与接口一致；停止 backend 后显示"模板加载失败 + 重试"。说明：上传位是不可操作的占位（选图由 T-031、提交由 T-032 实现），History 内容由 T-052 填充；"不存在"在客户端判定，页面 HTTP 状态仍为 200；分类筛选只保存在内存中，刷新详情页后"返回"回到"全部"；列表页的加载 hook 抽到 `lib/useKeyedLoad.ts` 供两页共用（行为不变）；已登录状态与"返回"点击只做了组件测试，未在真实浏览器中自动化验证。
 
 ### M2 选图与提交
 
