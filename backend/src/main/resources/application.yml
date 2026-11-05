@@ -20,7 +20,8 @@ spring:
 
   servlet:
     multipart:
-      # 全局上限，超限返回 413 PAYLOAD_TOO_LARGE [OQ-18]；单模板的更小上限在业务层校验
+      # 全局上限，超限返回 413 PAYLOAD_TOO_LARGE [OQ-18]；单模板的更小上限在业务层校验。
+      # max-request-size 必须 ≥ 最大张数 × 单张上限（种子 3 × 5 MB = 15 MB），由 MultipartLimitsIT 校验
       max-file-size: 5MB
       max-request-size: 20MB
 
@@ -30,6 +31,10 @@ mybatis:
     map-underscore-to-camel-case: true
 
 app:
+  storage:
+    # 上传与结果文件根目录；容器内挂载数据卷（architecture §7、database.md §6）。
+    # 暂存目录 tmp/ 与正式目录 uploads/ 都在其下，保证 commit 时是同一文件系统内的原子移动（T-030）
+    root: ${APP_STORAGE_ROOT:/data/storage}
   auth:
     # 会话固定有效期，不续期 [OQ-28 临时默认 7 天]
     session-ttl: 7d
