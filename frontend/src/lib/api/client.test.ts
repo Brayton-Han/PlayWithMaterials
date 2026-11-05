@@ -1,5 +1,5 @@
 import { http, HttpResponse, delay } from "msw";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { server } from "@/test/msw/server";
 
@@ -7,8 +7,10 @@ import {
   ApiError,
   GENERIC_HTTP_ERROR_MESSAGE,
   NETWORK_ERROR_MESSAGE,
+  abortAllRequests,
   apiRequest,
   isAbortError,
+  setUnauthorizedHandler,
 } from "./client";
 
 async function catchError(promise: Promise<unknown>): Promise<unknown> {
@@ -134,5 +136,68 @@ describe("apiRequest", () => {
     const error = await pending;
     expect(error).not.toBeInstanceOf(ApiError);
     expect(isAbortError(error)).toBe(true);
+  });
+});
+
+describe("abortAllRequests", () => {
+  it("aborts every in-flight request but not requests started afterwards", async () => {
+    server.use(
+      http.get("/api/slow", async () => {
+        await delay("infinite");
+        return HttpResponse.json({});
+      }),
+      http.get("/api/ping", () => HttpResponse.json({ ok: true })),
+    );
+
+    const first = catchError(apiRequest("/api/slow"));
+    const second = catchError(apiRequest("/api/slow", { signal: new AbortController().signal }));
+    abortAllRequests();
+
+    expect(isAbortError(await first)).toBe(true);
+    expect(isAbortError(await second)).toBe(true);
+    await expect(apiRequest("/api/ping")).resolves.toEqual({ ok: true });
+  });
+});
+
+describe("global 401 handling", () => {
+  const unauthenticated = () =>
+    HttpResponse.json({ code: "UNAUTHENTICATED", message: "请先登录" }, { status: 401 });
+
+  it("notifies the handler for a 401 from a business endpoint and still rejects", async () => {
+    const handler = vi.fn();
+    const unregister = setUnauthorizedHandler(handler);
+    server.use(http.get("/api/tasks", unauthenticated));
+
+    const error = await catchError(apiRequest("/api/tasks?templateId=a"));
+    expect(error).toMatchObject({ kind: "http", status: 401, code: "UNAUTHENTICATED" });
+    expect(handler).toHaveBeenCalledTimes(1);
+    unregister();
+  });
+
+  it("does not notify for /api/auth/me or /api/auth/login, nor for other statuses", async () => {
+    const handler = vi.fn();
+    const unregister = setUnauthorizedHandler(handler);
+    server.use(
+      http.get("/api/auth/me", unauthenticated),
+      http.post("/api/auth/login", () =>
+        HttpResponse.json({ code: "INVALID_CREDENTIALS", message: "用户名或密码错误" }, { status: 401 }),
+      ),
+      http.get("/api/tasks/1", () => HttpResponse.json({ code: "TASK_NOT_FOUND", message: "任务不存在" }, { status: 404 })),
+    );
+
+    await catchError(apiRequest("/api/auth/me"));
+    await catchError(apiRequest("/api/auth/login", { method: "POST", body: {} }));
+    await catchError(apiRequest("/api/tasks/1"));
+    expect(handler).not.toHaveBeenCalled();
+    unregister();
+  });
+
+  it("stops notifying after the handler is unregistered", async () => {
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler)();
+    server.use(http.get("/api/tasks", unauthenticated));
+
+    await catchError(apiRequest("/api/tasks"));
+    expect(handler).not.toHaveBeenCalled();
   });
 });
