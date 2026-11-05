@@ -31,7 +31,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     /**
      * 只把种子封面 / 示例图 {@code /files/seed/**} 映射到 {@code classpath:/seed/}（公开，api.yaml getSeedFile）。
-     * 用户素材和结果图（/files/uploads、/files/results）不做静态映射，由 T-047 的 Controller 校验归属后返回。
+     * 用户素材和结果图（/files/uploads、/files/results）不做静态映射，由 {@code UserFileController} 校验归属后返回（T-047）。
      * 资源处理器本身拒绝路径穿越，且不提供目录列举。
      */
     @Override

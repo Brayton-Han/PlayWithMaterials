@@ -130,7 +130,7 @@ class TaskStepsIT {
         long taskId = submit();
         pipeline.run(taskId);
 
-        // 结果文件属于用户数据（DQ-02）：匿名一律 401；本人访问由 T-047 的 UserFileController 提供
+        // 结果文件属于用户数据（DQ-02）：匿名一律 401；本人 / 他人访问见 UserFileControllerIT（T-047）
         mvc.perform(get((String) row(taskId).get("result_url"))).andExpect(status().isUnauthorized());
     }
 

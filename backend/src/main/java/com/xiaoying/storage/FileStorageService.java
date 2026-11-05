@@ -96,7 +96,7 @@ public class FileStorageService {
         }
     }
 
-    /** storageKey → 站内可访问 URL（{@code /files/uploads/yyyy/MM/{uuid}.ext}）。实际访问控制由 T-047 负责。 */
+    /** storageKey → 站内可访问 URL（{@code /files/uploads/yyyy/MM/{uuid}.ext}）。访问控制见 {@code UserFileController}。 */
     public String urlOf(String storageKey) {
         checkKey(storageKey);
         return FILES_URL_PREFIX + storageKey;

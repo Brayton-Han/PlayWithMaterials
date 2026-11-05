@@ -42,4 +42,17 @@ public enum ImageType {
         }
         return Optional.empty();
     }
+
+    /** 按扩展名查找（不带点，忽略大小写）；不认识的扩展名返回空。 */
+    public static Optional<ImageType> fromExtension(String extension) {
+        if (extension == null) {
+            return Optional.empty();
+        }
+        for (ImageType t : values()) {
+            if (t.extension.equalsIgnoreCase(extension)) {
+                return Optional.of(t);
+            }
+        }
+        return Optional.empty();
+    }
 }
