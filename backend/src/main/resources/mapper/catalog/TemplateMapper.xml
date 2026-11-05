@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xiaoying.catalog.mapper.TemplateMapper">
+
+    <resultMap id="templateDetail" type="com.xiaoying.catalog.domain.Template" autoMapping="true">
+        <id property="id" column="id"/>
+        <result property="acceptedMimeTypes" column="accepted_mime_types"
+                typeHandler="com.xiaoying.common.mybatis.StringListJsonTypeHandler"/>
+    </resultMap>
+
+    <!-- 卡片只取列表所需字段（api.yaml TemplateSummary）。
+         "全部"按分类顺序再按模板 sort_order（与种子顺序一致）；单分类走 idx_templates_category_sort。 -->
+    <select id="findSummaries" resultType="com.xiaoying.catalog.domain.Template">
+        SELECT t.id, t.category_id, t.title, t.cover_url, t.sort_order
+        FROM templates t
+        <choose>
+            <when test="categoryId != null">
+                WHERE t.category_id = #{categoryId}
+                ORDER BY t.sort_order, t.id
+            </when>
+            <otherwise>
+                JOIN categories c ON c.id = t.category_id
+                ORDER BY c.sort_order, c.id, t.sort_order, t.id
+            </otherwise>
+        </choose>
+    </select>
+
+    <select id="findById" resultMap="templateDetail">
+        SELECT t.id, t.category_id, c.name AS category_name, t.title, t.description, t.cover_url,
+               t.sample_result_path, t.required_image_count, t.accepted_mime_types,
+               t.max_file_size_bytes, t.sort_order
+        FROM templates t
+        JOIN categories c ON c.id = t.category_id
+        WHERE t.id = #{id}
+    </select>
+</mapper>

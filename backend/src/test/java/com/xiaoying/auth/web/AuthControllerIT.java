@@ -372,11 +372,11 @@ class AuthControllerIT {
     // ---------- 访问控制矩阵（architecture §4.3） ----------
 
     @Test
-    void anonymousTemplateEndpointsAreNotBlockedByAuth() throws Exception {
-        // 模板接口由 T-020 实现；此处只验证拦截器放行（不是 401）。放行后返回 200 由 AuthInterceptorTest 用桩接口验证。
-        mvc.perform(get("/api/templates")).andExpect(status().is(not(401)));
-        mvc.perform(get("/api/templates/demo-postcard")).andExpect(status().is(not(401)));
-        mvc.perform(get("/api/categories")).andExpect(status().is(not(401)));
+    void anonymousTemplateEndpointsAre200() throws Exception {
+        // 模板接口已由 T-020 实现，匿名访问应直接 200（更多用例见 CatalogControllerIT）
+        mvc.perform(get("/api/templates")).andExpect(status().isOk());
+        mvc.perform(get("/api/templates/demo-postcard")).andExpect(status().isOk());
+        mvc.perform(get("/api/categories")).andExpect(status().isOk());
     }
 
     @Test

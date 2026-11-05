@@ -175,6 +175,7 @@ flowchart TD
 - **依赖**：T-004, T-021
 - **完成定义**：Controller / Mapper 测试覆盖全部、按分类、不存在三种情况；封面 URL 可在浏览器打开。
 - **相关**：F-01, F-02
+- **状态**：Done（2026-11-05）。`CatalogControllerIT`（17）通过：全部 / 按分类 / 不存在的分类返回空列表 / 超长 categoryId 400 / 详情字段与 api.yaml 严格一致且不含 `sample_result_path` / 不存在 → 404 `TEMPLATE_NOT_FOUND` / 匿名及无效 Cookie 均 200 / `/files/seed/**` 200、缺失文件 404、目录不列举、路径穿越不可达。T-010 遗留的"匿名访问模板接口 200"已在真实接口上复核（`AuthControllerIT` 改为断言 200）。`docker compose up --build` 后经前端 :3000 代理 curl 四个 `coverUrl` 均 200 `image/jpeg`。说明："全部"列表按分类顺序再按模板 `sort_order` 排序（= 种子顺序）；目录接口的写方法返回 405（路由先于鉴权拦截器）。
 
 #### T-021 种子素材准备 · S · P0
 - **范围**：每个模板的封面图、预置结果图；演示上传用的样例（合法 jpg/png、超大文件、非法类型）；记录来源与许可。
