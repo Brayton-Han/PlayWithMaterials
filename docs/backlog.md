@@ -96,14 +96,14 @@ flowchart TD
 ### M0 工程骨架
 
 #### T-001 仓库结构与基础约定 · S · P0
-- **范围**：建立 `frontend/`、`backend/`、`docs/`、`deploy/`（或根目录 compose）目录；`.gitignore`、`.editorconfig`、`.env.example` 占位；根 README 骨架。
+- **范围**：建立 `frontend/`、`backend/`、`docs/` 目录与根目录 compose 文件；`.gitignore`、`.editorconfig`、`.env.example` 占位；根 README 骨架。
 - **依赖**：无
 - **完成定义**：目录结构就绪，`git status` 中没有构建产物或依赖目录。
 
 #### T-002 后端脚手架 · S · P0
 - **范围**：Spring Boot + MyBatis + MySQL 驱动；`dev`/`test`/`prod` profile；统一错误响应结构 `{code,message,details}` 与全局异常处理（含 multipart 超限异常 → 413）；health 接口；CORS 或 Next.js 中间层约定（与 T-003 对齐，需考虑会话 Cookie 的携带方式）。
 - **依赖**：T-001
-- **完成定义**：`mvn verify` 通过；本地连接 MySQL 后 health 返回 UP；示例接口抛业务异常时返回统一错误结构。
+- **完成定义**：`./mvnw verify` 通过；连接 MySQL 后 health 返回 UP；示例接口抛业务异常时返回统一错误结构。
 - **相关**：F-14, R-01
 
 #### T-003 前端脚手架 · S · P0
@@ -125,13 +125,13 @@ flowchart TD
 - **完成定义**：空库启动后自动建表并写入种子；重复启动不重复插入；演示账户可登录（T-010 完成后验证）。
 - **相关**：F-13, requirements §4
 
-#### T-005 本地开发 MySQL · S · P0
-- **范围**：开发用 `docker-compose.dev.yml`（只含 MySQL + 数据卷）及连接配置示例。
+#### T-005 本地开发环境（全部容器化） · S · P0
+- **范围**：开发用 `docker-compose.dev.yml`：MySQL + 数据卷，以及 backend / frontend 开发容器（源码挂载、前端热更新）；`backend/Dockerfile`、`frontend/Dockerfile`（多阶段，含 `dev` 与 `runtime` 目标）；连接配置示例。宿主机只需要 Docker。
 - **依赖**：T-001
-- **完成定义**：一条命令拉起 MySQL，后端 dev profile 可以连上。
+- **完成定义**：一条命令拉起全部服务，后端 dev profile 连上 MySQL，前端经 rewrites 访问后端；测试可在容器内执行。
 
 #### T-006 CI 骨架 · S · P0
-- **范围**：`.github/workflows/ci.yml`，push / pull_request 触发；frontend job：安装（锁文件）→ lint → typecheck → test → build；backend job：安装 JDK → `mvn -B verify`。
+- **范围**：`.github/workflows/ci.yml`，push / pull_request 触发；frontend job：安装（锁文件）→ lint → typecheck → test → build；backend job：安装 JDK → `./mvnw -B verify`；docker job：`docker compose up --build --wait` 冒烟。
 - **依赖**：T-002, T-003
 - **完成定义**：推送分支后两个 job 均为绿色；故意制造类型错误时 frontend job 失败。
 - **相关**：F-14
@@ -292,7 +292,7 @@ flowchart TD
   6. 每阶段配置 5s 时，提交小文件的接口在 1s 内返回（集成测试，用 Awaitility 等到终态）；
   7. 提交校验：数量 / 类型 / 大小 / 模板不存在，均无任务记录和残留文件。
 - **依赖**：T-043, T-044, T-045
-- **完成定义**：`mvn verify` 在本地和 CI 都通过。
+- **完成定义**：`./mvnw verify` 在开发容器和 CI 中都通过。
 - **相关**：F-15
 
 ### M4 前端异步状态
@@ -353,12 +353,14 @@ flowchart TD
 #### T-060 CI 完整化 · S · P0
 - **范围**：CI 跑前后端全部测试；后端集成测试所需的 MySQL（Testcontainers 或 `services: mysql`）；依赖缓存；README 中加入 CI 说明。
 - **依赖**：T-046, T-056
+- **说明**：依赖缓存、Testcontainers、API 类型同步检查、docker compose 冒烟与 README CI 说明已在 S0（T-006）中完成；本任务确认功能测试补齐后全部运行。
 - **完成定义**：PR 上全部检查为绿色；任一测试失败时 CI 失败。
 - **相关**：F-14
 
 #### T-062 Docker Compose 交付 · M · P1（建议纳入 MVP）
 - **范围**：`frontend/Dockerfile`、`backend/Dockerfile`（多阶段构建）；`docker-compose.yml`：mysql（健康检查、初始化）、backend（depends_on healthy、上传文件数据卷、`SPRING_PROFILES_ACTIVE=demo` 以启用模拟开发接口）、frontend；`.env.example`（没有真实凭据）；反向代理或同源配置，确保会话 Cookie 在容器环境下能正常携带。
 - **依赖**：T-055, T-013（功能闭环完成后）
+- **说明**：Dockerfile 与 `docker-compose.yml` 已随 S0（T-005）提前完成并在 CI 中冒烟；本任务负责功能闭环后的完整验收。
 - **完成定义**：在干净机器上执行 `docker compose up --build`，能用演示账户完成成功、失败、多任务、刷新恢复、我的记录、修改密码、删除账户的演示；`down` 再 `up` 后数据仍在。
 - **相关**：F-17
 

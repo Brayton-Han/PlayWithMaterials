@@ -71,37 +71,51 @@ flowchart LR
 
 | 服务 | 镜像 | 端口 | 依赖 | 说明 |
 | --- | --- | --- | --- | --- |
-| `mysql` | `mysql:8.4` | 3306（仅内部，可选映射） | — | 健康检查 `mysqladmin ping`；数据卷 `mysql-data` |
-| `backend` | 多阶段构建：Maven 构建 → JRE 21 运行 | 8080（可选映射，便于 curl） | `mysql` healthy | `SPRING_PROFILES_ACTIVE=demo`；启动时 Flyway 建表和写种子；数据卷 `storage-data:/data/storage` |
-| `frontend` | 多阶段构建：`next build`（standalone）→ Node 运行 | 3000（对外） | `backend` healthy | 构建参数 `BACKEND_INTERNAL_URL` |
+| `mysql` | `mysql:8.4` | 3306（仅内部，不映射到宿主机） | — | 健康检查 `mysqladmin ping`；数据卷 `mysql-data` |
+| `backend` | 多阶段构建：Maven 构建 → JRE 21 运行（非 root 用户 `app`） | 8080（映射，便于 curl） | `mysql` healthy | `SPRING_PROFILES_ACTIVE=demo`；启动时 Flyway 建表和写种子；数据卷 `storage-data:/data/storage` |
+| `frontend` | 多阶段构建：`next build`（standalone）→ Node 运行（非 root 用户 `node`） | 3000（对外） | `backend` healthy | 构建参数 `BACKEND_INTERNAL_URL` |
 
-本地开发：`docker-compose.dev.yml` 只启动 MySQL；后端 `mvn spring-boot:run -Dspring-boot.run.profiles=dev`；前端 `npm run dev`（rewrites 指向 `http://localhost:8080`）。
+镜像 tag 由 `IMAGE_TAG` 控制（`xiaoying-backend:<tag>`、`xiaoying-frontend:<tag>`），回滚时切回上一个 tag `[OQ-21]`。
+
+镜像：`backend/Dockerfile`、`frontend/Dockerfile` 均为多阶段构建，同一个文件提供 `dev`（开发）与 `runtime`（演示 / 生产）两个目标；runtime 镜像以非 root 用户运行并自带 `HEALTHCHECK`。
+
+### 1.3 本地开发拓扑（docker-compose.dev.yml）`[技术决策]`
+
+**所有服务（含前后端）都在 Docker 中运行**，宿主机只需要 Docker；JDK、Node.js、Maven 都在镜像里，开发与 CI / 演示使用相同的运行时版本。
+
+| 服务 | 镜像目标 | 端口 | 运行方式 | 说明 |
+| --- | --- | --- | --- | --- |
+| `mysql` | `mysql:8.4` | 宿主机 3307（`MYSQL_PORT`，避免与本机 MySQL 冲突） | — | 数据卷 `mysql-dev-data` |
+| `backend` | `backend/Dockerfile` → `dev`（JDK 21） | 8080 | `./mvnw spring-boot:run`（dev profile），源码 bind mount | 修改 Java 代码后 `restart backend`；`target/`、`~/.m2` 用命名卷；挂载宿主机 `docker.sock` 供容器内 Testcontainers 使用 |
+| `frontend` | `frontend/Dockerfile` → `dev`（Node 24） | 3000 | `next dev`，源码 bind mount，热更新 | `node_modules`、`.next` 用匿名卷（使用镜像内的 Linux 依赖，与宿主机隔离）；`docs/` 只读挂载供 `gen:api`；`BACKEND_INTERNAL_URL=http://backend:8080` 运行时读取 |
+
+测试、lint、类型生成同样在容器中执行（`docker compose -f docker-compose.dev.yml exec frontend npm test`、`... run --rm backend ./mvnw -B verify`），命令见 README。
 
 ---
 
 ## 2. 技术选型
 
-版本为建议值，在 T-002 / T-003 中验证兼容后锁定，并写入 README（R-01.5）。
+以下版本已在 S0（T-002 / T-003）中验证兼容并锁定，同步写入 README（R-01.5）。所有服务都在 Docker 中构建和运行（§1.2、§1.3），宿主机只需要 Docker。
 
 | 层 | 选型 | 用途 / 理由 |
 | --- | --- | --- |
-| 语言运行时 | Java 21 LTS；Node.js 24 LTS | 长期支持版本 |
-| 后端框架 | Spring Boot 4.0.x（若 MyBatis starter 兼容性有问题，退回 3.5.x） | PRD 指定 Spring Boot（R-01.2） |
-| 持久层 | MyBatis + mybatis-spring-boot-starter（与 Boot 主版本匹配：Boot 4 → 4.0.x，Boot 3 → 3.0.x），XML Mapper | PRD 指定；XML 中 SQL 一目了然，条件更新易审查 |
+| 语言运行时 | Java 21 LTS（`eclipse-temurin:21`）；Node.js 24 LTS（`node:24-alpine`） | 长期支持版本；镜像固定运行时，开发、CI、演示一致 |
+| 后端框架 | Spring Boot 4.0.9 | PRD 指定 Spring Boot（R-01.2） |
+| 持久层 | MyBatis + mybatis-spring-boot-starter 4.0.1（与 Boot 4.0 匹配），XML Mapper | PRD 指定；XML 中 SQL 一目了然，条件更新易审查 |
 | 数据库 | MySQL 8.4 LTS，`utf8mb4` / `utf8mb4_0900_ai_ci` | PRD 指定；8.0.16+ 才强制执行 CHECK 约束 |
-| 迁移 | Flyway（`flyway-core` + `flyway-mysql`） | 容器启动自动建表和写种子；版本化，只增不改 |
+| 迁移 | Flyway（`spring-boot-starter-flyway` + `flyway-mysql`） | 容器启动自动建表和写种子；版本化，只增不改 |
 | 校验 | Jakarta Bean Validation（`spring-boot-starter-validation`） | DTO 字段规则 |
 | 密码哈希 | `spring-security-crypto` 的 `BCryptPasswordEncoder`（cost 10） | 只引入加密模块，**不引入** Spring Security 过滤器链，鉴权用一个 `HandlerInterceptor` 即可 |
 | 异步执行 | Spring `ThreadPoolTaskExecutor` | 进程内有界线程池（R-01.5 允许） |
 | 文件类型探测 | 自写魔数检测（JPEG `FF D8 FF`、PNG `89 50 4E 47 0D 0A 1A 0A`、WebP `RIFF....WEBP`） | 只需要少数图片类型，不引入 Tika `[OQ-17]` |
 | 健康检查 | `spring-boot-starter-actuator`，只暴露 `health` | Compose 健康检查 |
 | 后端测试 | JUnit 5、Mockito、Spring Boot Test、Testcontainers（MySQL）、Awaitility | 编排逻辑单测 + 真实 MySQL 集成测试 |
-| 前端框架 | Next.js 16.x App Router + React 19.x + TypeScript（strict） | PRD 指定（R-01.1） |
-| 样式 | Tailwind CSS | 无运行时开销，便于做暗色主题（F-18） |
+| 前端框架 | Next.js 16.4 App Router + React 19 + TypeScript 5（strict） | PRD 指定（R-01.1） |
+| 样式 | Tailwind CSS 4 | 无运行时开销，便于做暗色主题（F-18） |
 | 客户端状态 | React Context（身份）+ Zustand（任务 store） | Zustand store 可在 React 外读写，调度器和单测都方便；不引入数据请求库，任务跟踪逻辑自己实现以便解释（PRD 目标 2 的考察点） |
 | 契约类型 | `openapi-typescript` 从 `docs/api.yaml` 生成 `schema.d.ts` | 前端类型与契约一致 |
 | 前端测试 | Vitest、React Testing Library、MSW、fake timers | 覆盖 F-15 前端条目 |
-| CI | GitHub Actions：frontend job + backend job | R-12.1 |
+| CI | GitHub Actions：frontend job + backend job + docker compose 冒烟 job | R-12.1 |
 
 明确**不引入**：Spring Security 过滤器链、JPA、Redis、MQ、WebSocket/SSE（P2）、SWR/React Query、对象存储、API 网关。
 
@@ -476,7 +490,7 @@ frontend/src
 | --- | --- | --- |
 | `spring.datasource.url / username / password` | 环境变量 | MySQL 连接，URL 带 `connectionTimeZone=UTC` |
 | `spring.servlet.multipart.max-file-size` / `max-request-size` | 5MB / 20MB | 超限返回 413 `[OQ-18]` |
-| `app.storage.root` | `/data/storage`（dev 为 `./data/storage`） | 上传与结果文件根目录 |
+| `app.storage.root` | `/data/storage`（容器内，环境变量 `APP_STORAGE_ROOT`，挂载数据卷） | 上传与结果文件根目录 |
 | `app.auth.session-ttl` | `7d` | `[OQ-28]` |
 | `app.auth.cookie-secure` | `false` | 部署到 https 时改为 true |
 | `app.task.executor.pool-size` / `queue-capacity` | 2 / 100 | `[OQ-12]` |
@@ -484,7 +498,7 @@ frontend/src
 | `app.simulation.fail-stage` | 空 | `ASSET_CHECK` / `GENERATING` / `RESULT_ORGANIZING` |
 | `app.simulation.fail-reason` | 空（使用按阶段的默认文案） | `[OQ-11]` |
 | `app.simulation.dev-api-enabled` | dev、demo profile 为 true，其余 false | 控制 `/api/dev/simulation` 是否注册 |
-| `BACKEND_INTERNAL_URL`（前端构建参数） | `http://localhost:8080` | rewrites 目标 |
+| `BACKEND_INTERNAL_URL`（前端） | `http://localhost:8080`；compose 中为 `http://backend:8080` | rewrites 目标；`next dev` 运行时读取，runtime 镜像在构建期写入 |
 
 ---
 

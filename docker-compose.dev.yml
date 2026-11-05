@@ -1,6 +1,11 @@
-# 本地开发：只启动 MySQL（T-005）。
-#   docker compose -f docker-compose.dev.yml up -d mysql
-# 后端：cd backend && ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
+# 本地开发：mysql + backend + frontend 全部在容器中运行，源码以 bind mount 挂载。
+#
+#   docker compose -f docker-compose.dev.yml up --build      # http://localhost:3000
+#
+# - frontend：next dev，修改 frontend/ 下的代码即时热更新
+# - backend ：spring-boot:run（dev profile），修改 Java 代码后执行
+#             docker compose -f docker-compose.dev.yml restart backend
+# - 测试也在容器中执行，见 README "常用命令"
 name: xiaoying-dev
 
 services:
@@ -18,6 +23,7 @@ services:
       - --collation-server=utf8mb4_0900_ai_ci
       - --default-time-zone=+00:00
     ports:
+      # 映射到宿主机仅为方便用数据库客户端查看；默认 3307，避免与本机 MySQL 冲突
       - "${MYSQL_PORT:-3307}:3306"
     volumes:
       - mysql-dev-data:/var/lib/mysql
@@ -27,5 +33,58 @@ services:
       timeout: 3s
       retries: 30
 
+  backend:
+    build:
+      context: ./backend
+      target: dev
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-xiaoying}?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&characterEncoding=UTF-8
+      DB_USERNAME: ${MYSQL_USER:-xiaoying}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-xiaoying}
+      APP_STORAGE_ROOT: /data/storage
+      # 在容器内运行 ./mvnw verify 时，Testcontainers 通过宿主机 Docker 启动 MySQL
+      TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - ./backend:/app
+      - backend-target:/app/target          # 编译产物留在容器内，不与宿主机 IDE 冲突
+      - maven-repo:/root/.m2                # Maven 依赖与 wrapper 缓存
+      - storage-dev-data:/data/storage
+      - /var/run/docker.sock:/var/run/docker.sock   # 仅供 Testcontainers 使用
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      start_period: 180s
+      retries: 30
+
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    depends_on:
+      - backend
+    environment:
+      # next dev 在启动时读取，rewrites 转发到 backend 容器
+      BACKEND_INTERNAL_URL: http://backend:8080
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    volumes:
+      - ./frontend:/app
+      - ./docs:/docs:ro                           # npm run gen:api 读取 ../docs/api.yaml
+      # 匿名卷：使用镜像内（Linux）安装的依赖；package.json 变更后用 --renew-anon-volumes 刷新
+      - /app/node_modules
+      - /app/.next
+
 volumes:
   mysql-dev-data:
+  storage-dev-data:
+  maven-repo:
+  backend-target:
