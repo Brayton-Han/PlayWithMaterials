@@ -1,0 +1,4 @@
+# 自动化测试：数据源由 Testcontainers @ServiceConnection 注入，这里不配置 URL
+logging:
+  level:
+    com.xiaoying: DEBUG

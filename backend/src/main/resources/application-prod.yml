@@ -1,0 +1,9 @@
+# 生产：连接信息必须通过环境变量提供
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+logging:
+  level:
+    com.xiaoying: INFO

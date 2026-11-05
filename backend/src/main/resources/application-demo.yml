@@ -1,0 +1,4 @@
+# docker compose 演示环境：DB_URL / DB_USERNAME / DB_PASSWORD 由 compose 注入（T-062）
+logging:
+  level:
+    com.xiaoying: INFO
