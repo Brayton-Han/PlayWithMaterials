@@ -35,6 +35,16 @@ app:
     # 上传与结果文件根目录；容器内挂载数据卷（architecture §7、database.md §6）。
     # 暂存目录 tmp/ 与正式目录 uploads/ 都在其下，保证 commit 时是同一文件系统内的原子移动（T-030）
     root: ${APP_STORAGE_ROOT:/data/storage}
+  simulation:
+    # 模拟制作的默认配置（architecture §7），创建任务时快照到 tasks.sim_config [OQ-10]。
+    # 环境变量覆盖：APP_SIMULATION_ASSET_CHECK_MS、APP_SIMULATION_FAIL_STAGE 等；运行时修改接口见 T-044
+    asset-check-ms: 1500
+    generating-ms: 3000
+    result-organizing-ms: 1500
+    # 空 = 不失败；可选 ASSET_CHECK / GENERATING / RESULT_ORGANIZING
+    fail-stage:
+    # 空 = 使用按阶段的默认文案 [OQ-11]
+    fail-reason:
   auth:
     # 会话固定有效期，不续期 [OQ-28 临时默认 7 天]
     session-ttl: 7d

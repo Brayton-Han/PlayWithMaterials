@@ -64,6 +64,7 @@ flowchart LR
 注意事项（在 T-003 / T-062 中验证）：
 
 1. **不使用** Next.js middleware / `proxy.ts`。存在 middleware 时，Next.js 会缓冲请求体并有默认大小上限（约 10 MB），会截断 multipart 上传。路由守卫在客户端做，真正的权限由 Java 保证。
+   T-041 实测：即使没有 `proxy.ts`，Next.js 16 的 rewrites 转发仍按 `experimental.proxyClientMaxBodySize`（默认 10 MB）缓冲并截断请求体，因此 `next.config.ts` 将其设为 `25mb`（高于后端 20 MB 请求上限，超限请求完整到达 Java 并返回 413）。
 2. standalone 构建时 rewrites 目标地址在**构建时**写入，Docker 构建需要传入 `BACKEND_INTERNAL_URL`（Compose 中为 `http://backend:8080`）。
 3. 所有业务数据都由 Client Component 通过同源 `/api` 获取，不在 Server Component 里调用 Java。这样不需要在服务端转发 Cookie，前端只有一个 API client 和一套错误模型，也方便用 MSW 测试。
 
