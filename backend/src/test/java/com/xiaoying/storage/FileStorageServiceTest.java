@@ -190,6 +190,53 @@ class FileStorageServiceTest {
         assertThat(storage.resolve("uploads/2026/11/a.png")).isEqualTo(storage.root().resolve("uploads/2026/11/a.png"));
     }
 
+    // ---------- 结果文件（T-043） ----------
+
+    @Test
+    void storeResultWritesATaskSpecificFileWhoseUrlResolvesToTheContent() throws IOException {
+        StoredFile f = storage.storeResult(42, png(), ImageType.PNG);
+
+        assertThat(f.storageKey()).matches(
+                "results/42/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.png");
+        assertThat(f.url()).isEqualTo("/files/" + f.storageKey());
+        assertThat(f.sizeBytes()).isEqualTo(ImageTypeDetectorTest.PNG_HEADER.length);
+        assertThat(Files.readAllBytes(storage.resolve(keyOf(f.url())))).isEqualTo(ImageTypeDetectorTest.PNG_HEADER);
+        assertThat(listFiles(root.resolve("results/42"))).containsExactly(storage.resolve(f.storageKey()));
+        assertThat(storage.storeResult(42, png(), ImageType.JPEG).storageKey()).endsWith(".jpg")
+                .isNotEqualTo(f.storageKey());
+    }
+
+    @Test
+    void failedResultWriteLeavesNoFile() throws IOException {
+        InputStream broken = new InputStream() {
+            int n;
+
+            @Override
+            public int read() throws IOException {
+                if (n++ < 4) {
+                    return 'x';
+                }
+                throw new IOException("disk error");
+            }
+        };
+
+        assertThatThrownBy(() -> storage.storeResult(42, broken, ImageType.PNG)).isInstanceOf(StorageException.class);
+        assertThat(listFiles(root.resolve("results/42"))).isEmpty();
+    }
+
+    @Test
+    void resultWriteFailsWhenTheResultsDirectoryCannotBeCreated() throws IOException {
+        Files.writeString(root.resolve("results"), "a regular file blocks the results directory");
+        assertThatThrownBy(() -> storage.storeResult(42, png(), ImageType.PNG)).isInstanceOf(StorageException.class);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0, -1})
+    void storeResultRejectsInvalidTaskIds(long taskId) {
+        assertThatThrownBy(() -> storage.storeResult(taskId, png(), ImageType.PNG))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     @Test
     void defaultRootIsContainerVolume() {
         assertThat(new StorageProperties(null).root()).isEqualTo(Path.of("/data/storage"));

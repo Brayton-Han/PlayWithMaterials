@@ -56,7 +56,7 @@ import tools.jackson.databind.json.JsonMapper;
  * 在 DB 中能观察到 stage 依次经过 ASSET_CHECK → GENERATING → RESULT_ORGANIZING，最终 SUCCEEDED；
  * 任务被外部改为终态（删除账户时废弃）后，pipeline 不再推进、不写结果。
  *
- * <p>步骤目前是 T-042 的占位实现（按快照耗时等待），真实步骤与模拟失败由 T-043 / T-044 覆盖。
+ * <p>步骤为 T-043 的真实实现；各步骤的失败路径由 {@code TaskStepsIT} 与各步骤单测覆盖。
  */
 @SpringBootTest(properties = {
         "app.simulation.asset-check-ms=300",
@@ -129,7 +129,7 @@ class TaskExecutionIT {
                 "SUCCEEDED/RESULT_ORGANIZING");
 
         Map<String, Object> row = row(taskId);
-        assertThat((String) row.get("result_url")).matches("^/files/seed/results/[a-z-]+\\.png$");
+        assertThat((String) row.get("result_url")).matches("^/files/results/" + taskId + "/[0-9a-f-]{36}\\.png$");
         assertThat(row.get("failed_stage")).isNull();
         assertThat(row.get("failure_code")).isNull();
         assertThat(row.get("failure_reason")).isNull();

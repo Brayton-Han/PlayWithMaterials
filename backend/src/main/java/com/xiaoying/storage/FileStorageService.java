@@ -1,7 +1,14 @@
 package com.xiaoying.storage;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Clock;
+import java.util.Objects;
+import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -12,7 +19,8 @@ import org.springframework.stereotype.Service;
  * <pre>
  * ${app.storage.root}/
  * ├── tmp/{uuid}.{ext}.part          # 暂存，commit 前
- * └── uploads/yyyy/MM/{uuid}.{ext}   # 正式目录（task_assets.storage_key）
+ * ├── uploads/yyyy/MM/{uuid}.{ext}   # 正式目录（task_assets.storage_key）
+ * └── results/{taskId}/{uuid}.{ext}  # 结果文件（tasks.result_url，T-043）
  * </pre>
  *
  * <p>两阶段写入：{@link #newUploadBatch()} → {@link UploadBatch#stage} 写入临时目录 →
@@ -28,6 +36,7 @@ public class FileStorageService {
 
     static final String TMP_DIR = "tmp";
     static final String UPLOADS_DIR = "uploads";
+    static final String RESULTS_DIR = "results";
 
     private final Path root;
     private final Clock clock;
@@ -45,6 +54,46 @@ public class FileStorageService {
     /** 开始一批上传（一次任务提交对应一批）。批次对象不是线程安全的，只在当前请求线程中使用。 */
     public UploadBatch newUploadBatch() {
         return new UploadBatch(root, root.resolve(TMP_DIR), UPLOADS_DIR, clock);
+    }
+
+    /**
+     * 写入一个任务的结果文件（T-043 结果整理，database.md §6）：{@code results/{taskId}/{uuid}.{ext}}。
+     * 先写同目录下的 {@code .part}，写完后原子移动到正式文件名，所以正式路径上不会出现写了一半的文件。
+     * 文件名由服务端生成，扩展名由 {@code type} 决定。流由调用方关闭。
+     *
+     * @throws StorageException 写入失败；此时不会留下 {@code .part} 或正式文件
+     */
+    public StoredFile storeResult(long taskId, InputStream content, ImageType type) {
+        Objects.requireNonNull(content, "content");
+        Objects.requireNonNull(type, "type");
+        if (taskId <= 0) {
+            throw new IllegalArgumentException("invalid taskId");
+        }
+        String storageKey = "%s/%d/%s.%s".formatted(RESULTS_DIR, taskId, UUID.randomUUID(), type.extension());
+        Path finalPath = resolve(storageKey);
+        Path partPath = finalPath.resolveSibling(finalPath.getFileName() + ".part");
+        try {
+            Files.createDirectories(finalPath.getParent());
+            long size = Files.copy(content, partPath);
+            try {
+                Files.move(partPath, finalPath, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(partPath, finalPath);
+            }
+            return new StoredFile(storageKey, urlOf(storageKey), type, size);
+        } catch (IOException | RuntimeException e) {
+            deleteQuietly(partPath);
+            deleteQuietly(finalPath);
+            throw new StorageException("failed to store result for task " + taskId, e);
+        }
+    }
+
+    private static void deleteQuietly(Path p) {
+        try {
+            Files.deleteIfExists(p);
+        } catch (IOException ignored) {
+            // 尽力清理；调用方已经会收到 StorageException
+        }
     }
 
     /** storageKey → 站内可访问 URL（{@code /files/uploads/yyyy/MM/{uuid}.ext}）。实际访问控制由 T-047 负责。 */
