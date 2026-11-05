@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xiaoying.task.mapper.TaskAssetMapper">
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO task_assets (task_id, slot_index, storage_key, original_name, mime_type, size_bytes)
+        VALUES (#{taskId}, #{slotIndex}, #{storageKey}, #{originalName}, #{mimeType}, #{sizeBytes})
+    </insert>
+
+    <!-- Q10：uk_task_assets_task_slot；JOIN tasks 再校验一次归属 -->
+    <select id="listByTaskIdsAndUser" resultType="com.xiaoying.task.domain.TaskAsset">
+        SELECT a.id, a.task_id, a.slot_index, a.storage_key, a.original_name, a.mime_type, a.size_bytes, a.created_at
+        FROM task_assets a
+        JOIN tasks t ON t.id = a.task_id
+        WHERE t.user_id = #{userId}
+        <choose>
+            <when test="taskIds == null or taskIds.isEmpty()">AND 1 = 0</when>
+            <otherwise>
+                AND a.task_id IN <foreach collection="taskIds" item="i" open="(" separator="," close=")">#{i}</foreach>
+            </otherwise>
+        </choose>
+        ORDER BY a.task_id, a.slot_index
+    </select>
+</mapper>

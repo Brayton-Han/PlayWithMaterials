@@ -37,7 +37,7 @@ public class AuthInterceptor implements HandlerInterceptor {
             new Rule(Set.of(HttpMethod.POST), "/api/auth/register"),
             new Rule(Set.of(HttpMethod.POST), "/api/auth/login"),
             new Rule(Set.of(HttpMethod.POST), "/api/auth/logout"),
-            // 模拟控制接口不需要登录（DQ-01）；是否注册由 profile 决定（T-044）
+            // 模拟控制接口不需要登录（DQ-01）；只在 dev / demo profile 注册（app.simulation.dev-api-enabled），否则 404
             new Rule(null, "/api/dev/**"));
 
     private final SessionService sessionService;

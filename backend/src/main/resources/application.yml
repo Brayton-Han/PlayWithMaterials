@@ -20,7 +20,8 @@ spring:
 
   servlet:
     multipart:
-      # 全局上限，超限返回 413 PAYLOAD_TOO_LARGE [OQ-18]；单模板的更小上限在业务层校验
+      # 全局上限，超限返回 413 PAYLOAD_TOO_LARGE [OQ-18]；单模板的更小上限在业务层校验。
+      # max-request-size 必须 ≥ 最大张数 × 单张上限（种子 3 × 5 MB = 15 MB），由 MultipartLimitsIT 校验
       max-file-size: 5MB
       max-request-size: 20MB
 
@@ -30,6 +31,29 @@ mybatis:
     map-underscore-to-camel-case: true
 
 app:
+  storage:
+    # 上传与结果文件根目录；容器内挂载数据卷（architecture §7、database.md §6）。
+    # 暂存目录 tmp/ 与正式目录 uploads/ 都在其下，保证 commit 时是同一文件系统内的原子移动（T-030）
+    root: ${APP_STORAGE_ROOT:/data/storage}
+  simulation:
+    # 模拟制作的默认配置（architecture §7），创建任务时快照到 tasks.sim_config [OQ-10]。
+    # 环境变量覆盖：APP_SIMULATION_ASSET_CHECK_MS、APP_SIMULATION_FAIL_STAGE 等；超出范围（0 ~ 60000 ms、原因 ≤ 200 字）时启动失败
+    asset-check-ms: 1500
+    generating-ms: 3000
+    result-organizing-ms: 1500
+    # 空 = 不失败；可选 ASSET_CHECK / GENERATING / RESULT_ORGANIZING
+    fail-stage:
+    # 空 = 使用按阶段的默认文案 [OQ-11]
+    fail-reason:
+    # 是否注册 GET/PUT /api/dev/simulation（运行时修改、不持久化、不需要登录 DQ-01）。
+    # 只在 application-dev.yml / application-demo.yml 中打开；其他 profile（含 prod）下该接口 404
+    dev-api-enabled: false
+  task:
+    executor:
+      # 任务执行线程池 [OQ-12 临时默认]：核心 = 最大 = pool-size；队列满时拒绝受理（503 QUEUE_FULL，不建任务）。
+      # 环境变量覆盖：APP_TASK_EXECUTOR_POOL_SIZE、APP_TASK_EXECUTOR_QUEUE_CAPACITY
+      pool-size: 2
+      queue-capacity: 100
   auth:
     # 会话固定有效期，不续期 [OQ-28 临时默认 7 天]
     session-ttl: 7d

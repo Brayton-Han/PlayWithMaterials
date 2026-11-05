@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.MessageSourceResolvable;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.util.unit.DataSize;
@@ -46,9 +47,18 @@ public class GlobalExceptionHandler {
 
     // ---------- 业务异常 ----------
 
+    /** 执行器繁忙时建议的重试间隔（api.yaml createTask 503 {@code Retry-After}）。 */
+    static final String QUEUE_FULL_RETRY_AFTER_SECONDS = "5";
+
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<ErrorResponse> handleApi(ApiException ex) {
-        return respond(ex.code(), ex.getMessage(), ex.details());
+        ResponseEntity<ErrorResponse> response = respond(ex.code(), ex.getMessage(), ex.details());
+        if (ex.code() == ErrorCode.QUEUE_FULL) {
+            return ResponseEntity.status(response.getStatusCode())
+                    .header(HttpHeaders.RETRY_AFTER, QUEUE_FULL_RETRY_AFTER_SECONDS)
+                    .body(response.getBody());
+        }
+        return response;
     }
 
     // ---------- 400 ----------
@@ -149,8 +159,8 @@ public class GlobalExceptionHandler {
         return (codes == null || codes.length == 0) ? null : codes[codes.length - 1];
     }
 
-    /** Bean Validation 约束名 → api.yaml FieldError.code。 */
-    static String fieldCode(String constraint) {
+    /** Bean Validation 约束名 → api.yaml FieldError.code（手动校验的 Controller 也用它，保持错误码一致）。 */
+    public static String fieldCode(String constraint) {
         if (constraint == null) {
             return "INVALID_VALUE";
         }

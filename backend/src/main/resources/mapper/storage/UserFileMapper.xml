@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xiaoying.storage.mapper.UserFileMapper">
+
+    <resultMap id="userFileRow" type="com.xiaoying.storage.mapper.UserFileRow">
+        <constructor>
+            <arg column="storage_key" javaType="string"/>
+            <arg column="mime_type" javaType="string"/>
+        </constructor>
+    </resultMap>
+
+    <!-- Q13：uk_task_assets_storage_key + tasks PK -->
+    <select id="findUpload" resultMap="userFileRow">
+        SELECT a.storage_key, a.mime_type
+        FROM task_assets a
+        JOIN tasks t ON t.id = a.task_id
+        WHERE a.storage_key = #{storageKey} AND t.user_id = #{userId}
+    </select>
+
+    <!-- Q14：tasks PK -->
+    <select id="findResultUrl" resultType="string">
+        SELECT result_url
+        FROM tasks
+        WHERE id = #{taskId} AND user_id = #{userId} AND result_url = #{resultUrl}
+    </select>
+</mapper>

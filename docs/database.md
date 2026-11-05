@@ -343,6 +343,7 @@ VALUES ('demo-postcard', 'creative', '旅行明信片', '上传图片，模拟�
 
 ```
 ${app.storage.root}/              # 容器内 /data/storage，挂载数据卷 storage-data
+├── tmp/{uuid}.{ext}.part        # 提交时的暂存文件，事务提交后移到 uploads/（T-030）
 ├── uploads/yyyy/MM/{uuid}.{ext}  # 用户上传的素材（task_assets.storage_key）
 └── results/{taskId}/{uuid}.{ext} # 结果文件（tasks.result_url）
 classpath:/seed/                  # 种子封面与预置结果图（只读，随 jar 打包）

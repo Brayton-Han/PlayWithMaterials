@@ -2,3 +2,7 @@
 logging:
   level:
     com.xiaoying: DEBUG
+app:
+  storage:
+    # 测试不写容器数据卷；需要真实文件的单测各自使用 @TempDir
+    root: ${java.io.tmpdir}/xiaoying-test-storage

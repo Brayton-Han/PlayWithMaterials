@@ -64,6 +64,7 @@ flowchart LR
 注意事项（在 T-003 / T-062 中验证）：
 
 1. **不使用** Next.js middleware / `proxy.ts`。存在 middleware 时，Next.js 会缓冲请求体并有默认大小上限（约 10 MB），会截断 multipart 上传。路由守卫在客户端做，真正的权限由 Java 保证。
+   T-041 实测：即使没有 `proxy.ts`，Next.js 16 的 rewrites 转发仍按 `experimental.proxyClientMaxBodySize`（默认 10 MB）缓冲并截断请求体，因此 `next.config.ts` 将其设为 `25mb`（高于后端 20 MB 请求上限，超限请求完整到达 Java 并返回 413）。
 2. standalone 构建时 rewrites 目标地址在**构建时**写入，Docker 构建需要传入 `BACKEND_INTERNAL_URL`（Compose 中为 `http://backend:8080`）。
 3. 所有业务数据都由 Client Component 通过同源 `/api` 获取，不在 Server Component 里调用 Java。这样不需要在服务端转发 Cookie，前端只有一个 API client 和一套错误模型，也方便用 MSW 测试。
 
@@ -289,16 +290,17 @@ sequenceDiagram
   TC->>TS: submit(currentUser, templateId, files)
   TS->>DB: 读取模板（不存在 → 404 TEMPLATE_NOT_FOUND）
   TS->>TS: 校验数量 / 每个文件非空、大小、魔数类型 ∈ acceptedMimeTypes<br/>（失败 → 400，带 slotIndex，不写任何文件）
-  TS->>FS: 逐个写入 uploads/yyyy/MM/{uuid}.{ext}
+  TS->>FS: 逐个暂存到 tmp/{uuid}.{ext}.part（UploadBatch.stage）
   TS->>DB: 事务：INSERT tasks(PENDING, sim_config 快照) + INSERT task_assets
   alt 事务失败
-    TS->>FS: 删除本次写入的文件
+    TS->>FS: rollback()：删除本批临时文件
     TS-->>UI: 500 INTERNAL_ERROR
   end
+  TS->>FS: commit()：移到 uploads/yyyy/MM/{uuid}.{ext}（失败 → 补偿删除任务 + rollback → 500）
   TS->>D: dispatch(taskId)（事务已提交）
   alt 线程池队列已满
     TS->>DB: 补偿删除 task_assets、tasks
-    TS->>FS: 删除本次写入的文件
+    TS->>FS: rollback()：删除本批已 commit 的文件
     TS-->>UI: 503 QUEUE_FULL [OQ-12]
   end
   TS-->>UI: 202 TaskDto(status=PENDING) + Location
@@ -308,7 +310,7 @@ sequenceDiagram
 要点：
 
 - **先校验、后写文件**：所有校验在写磁盘之前完成，校验失败不会产生文件。
-- **文件与数据库一致性**：文件直接写到正式目录（随机文件名），之后的任一步失败都删除本次写入的文件。与 backlog T-030 的"临时目录 → 正式目录"相比少一次移动，效果相同；只在进程恰好崩溃在两步之间时留下孤儿文件，README 说明即可。
+- **文件与数据库一致性**（T-030 两阶段写入）：文件先写到 `tmp/`（随机文件名），数据库事务提交后 `commit()` 原子移动到正式目录；之后任一步失败都 `rollback()` 删除本批文件（临时与已 commit 的）。进程恰好崩溃在两步之间时只会在 `tmp/` 留下孤儿文件，不会出现在正式目录，README 说明即可。
 - **事务提交后才派发**：`TaskSubmissionService.submit()` 本身不加事务，按"写文件 → 调用带 `@Transactional` 的 `TaskWriter.create()` → dispatch"顺序编排，执行器线程不会读到未提交的数据，也不需要 `TransactionSynchronization`。
 - **接口耗时只包含上传和入库**，不包含模拟耗时（R-04）。
 

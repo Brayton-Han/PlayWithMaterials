@@ -385,6 +385,7 @@ class AuthControllerIT {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
         mvc.perform(get("/api/tasks/42")).andExpect(status().isUnauthorized());
+        // POST /api/tasks（T-041）不限定 consumes，非 multipart 的匿名请求同样先得到 401
         mvc.perform(post("/api/tasks")).andExpect(status().isUnauthorized());
         mvc.perform(get("/api/account")).andExpect(status().isUnauthorized());
         mvc.perform(get("/files/uploads/2026/11/x.png")).andExpect(status().isUnauthorized());

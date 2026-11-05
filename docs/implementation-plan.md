@@ -190,7 +190,7 @@ S2 之所以把后端异步核心整体前置：它是 PRD 的首要考察点，
 
 | 任务 | 按本架构的产出 | 自动验证 | 手动验证 |
 | --- | --- | --- | --- |
-| T-030 | `storage` 模块：`ImageTypeDetector`（魔数）、`FileStorageService.store(InputStream, detectedType) → StoredFile(storageKey, url)`、`delete(storageKey)`、`toUrl(storageKey)`；multipart 上限 5 MB / 20 MB。比 backlog 的"临时目录 → 正式目录"更简单：直接写正式目录，失败时删除（architecture §5.1） | `ImageTypeDetectorTest`：JPEG / PNG / WebP 识别正确；改了扩展名的文本文件识别为不支持；空文件拒绝。`FileStorageServiceTest`（临时目录）：生成的 key 不含用户文件名、不含 `..`；`delete` 后文件不存在 | — |
+| T-030 | `storage` 模块：`ImageTypeDetector`（魔数）、`FileStorageService.newUploadBatch()` → `UploadBatch.stage(InputStream, detectedType) → StoredFile(storageKey, url)`（写 `tmp/`）、`commit()`（移到 `uploads/yyyy/MM/`）、`rollback()`（删除本批文件）；`urlOf` / `resolve(storageKey)`；multipart 上限 5 MB / 20 MB。按 backlog 的"临时目录 → 正式目录"两阶段写入（architecture §5.1） | `ImageTypeDetectorTest`：JPEG / PNG / WebP 识别正确；改了扩展名的文本文件识别为不支持；空文件拒绝。`FileStorageServiceTest`（@TempDir）：生成的 key 不含用户文件名、不含 `..`；rollback 后临时目录为空；commit 后 URL 解析到内容一致的文件。`MultipartLimitsIT`：全局上限覆盖每个模板的完整提交 | — |
 | T-031 | `features/upload/UploadSlots`、`useSlots`：`empty | selected | invalid`，blob URL 生命周期，锁定，显示服务端 `slotIndex` 错误，`aria-label` | `UploadSlots.test.tsx`：选择合法文件后出现预览且没有发出请求；非法类型 / 超大文件不进入上传位并显示原因；替换时旧 blob URL 被 `revokeObjectURL`；锁定期间不能操作 | 多种文件手动试一遍 |
 | T-032 | `lib/api/upload.ts`（XHR、`upload.onprogress`、`upload.onload` 表示"已发完" → 进入 submitting、abort）；`useSubmitTask`：`idle | uploading(p) | submitting | error` | `useSubmitTask.test.ts`（模拟 XHR）：未选齐时 `canSubmit=false`；双击只发一次；进度事件 → uploading → 发完 → submitting；网络错误后已选文件仍在；400 `ASSET_VALIDATION_FAILED` 的 `slotIndex` 错误显示到对应上传位；卸载时 abort | DevTools 限速 Slow 3G 观察进度条 → "提交中" |
 
