@@ -2,7 +2,7 @@
 
 选择模板 → 上传图片 → 后端异步执行"素材检查 → 生成 → 结果整理"三步 → 前端跟踪任务状态并展示结果。
 
-> 当前进度：**S0 工程骨架**（T-001 ~ T-006）。功能按 [docs/implementation-plan.md](docs/implementation-plan.md) 的阶段逐步实现。
+> 当前进度：**S0 工程骨架**（T-001 ~ T-006）已完成；**S1 身份 + 目录**进行中（已完成 T-010 后端注册 / 登录 / 退出、T-021 种子素材、T-020 模板接口）。功能按 [docs/implementation-plan.md](docs/implementation-plan.md) 的阶段逐步实现。
 
 ## 文档
 
@@ -24,6 +24,8 @@
 ├── backend/                 Spring Boot 4 + MyBatis + Flyway（Java 21），Dockerfile
 ├── frontend/                Next.js 16 App Router + React 19 + TypeScript + Tailwind，Dockerfile
 ├── docs/                    需求、设计与契约
+├── samples/                 演示上传用的样例文件（合法 / 超大 / 伪装类型）
+├── scripts/                 辅助脚本（gen-seed-assets.py 生成种子素材与样例）
 ├── docker-compose.dev.yml   本地开发：mysql + backend + frontend（源码挂载）
 ├── docker-compose.yml       演示 / 验收：mysql + backend + frontend（构建镜像）
 └── .env.example             环境变量示例
@@ -101,6 +103,16 @@ $DEV down                                # 加 -v 清空开发数据库
 | --- | --- |
 | `demo1` | `xiaoying123` |
 | `demo2` | `xiaoying123` |
+
+## 素材来源
+
+种子封面、预置结果图和演示样例**全部由 [scripts/gen-seed-assets.py](scripts/gen-seed-assets.py) 用 Pillow 程序绘制**（渐变 + 圆形 + 英文标签，字体为 Pillow 内置默认字体），不包含任何第三方图片，作为本项目原创内容以 [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) 发布（OQ-19 临时默认：优先自制）。重新生成：`python3 scripts/gen-seed-assets.py`（需要 Pillow，仅在修改素材时使用）。
+
+| 位置 | 文件 | 用途 |
+| --- | --- | --- |
+| `backend/src/main/resources/seed/covers/` | `postcard.jpg`、`poster.jpg`、`id-photo.jpg`、`collage.jpg`（800×600 JPEG） | 模板封面，经 `/files/seed/covers/**` 公开访问（`templates.cover_url`） |
+| `backend/src/main/resources/seed/results/` | 同名 `.png`（1024×768） | 预置结果图，结果整理阶段复制为任务专属文件（`templates.sample_result_path`，OQ-08 临时默认） |
+| `samples/` | 见 [samples/README.md](samples/README.md) | 演示上传：合法 JPEG / PNG / WebP、>1 MB、>5 MB、伪装成 `.jpg` 的文本文件 |
 
 ## CI
 

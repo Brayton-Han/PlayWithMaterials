@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xiaoying.auth.mapper.SessionMapper">
+
+    <insert id="insert">
+        INSERT INTO sessions (token_hash, user_id, created_at, expires_at)
+        VALUES (#{tokenHash}, #{userId}, #{createdAt}, #{expiresAt})
+    </insert>
+
+    <!-- architecture §4.2：排除过期会话和已删除用户 -->
+    <select id="findActiveUserByTokenHash" resultType="com.xiaoying.auth.domain.User">
+        SELECT u.id, u.username, u.email, u.password_hash, u.created_at
+        FROM sessions s JOIN users u ON u.id = s.user_id
+        WHERE s.token_hash = #{tokenHash}
+          AND s.expires_at &gt; #{now}
+          AND u.deleted_at IS NULL
+    </select>
+
+    <delete id="deleteByTokenHash">
+        DELETE FROM sessions WHERE token_hash = #{tokenHash}
+    </delete>
+</mapper>

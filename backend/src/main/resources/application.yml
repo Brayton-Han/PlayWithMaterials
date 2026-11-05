@@ -29,6 +29,13 @@ mybatis:
   configuration:
     map-underscore-to-camel-case: true
 
+app:
+  auth:
+    # 会话固定有效期，不续期 [OQ-28 临时默认 7 天]
+    session-ttl: 7d
+    # 部署到 https 时设为 true（环境变量 APP_AUTH_COOKIE_SECURE）
+    cookie-secure: false
+
 server:
   port: 8080
   error:

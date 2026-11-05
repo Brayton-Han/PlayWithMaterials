@@ -37,8 +37,9 @@ class ApplicationIT {
     }
 
     @Test
-    void unknownApiRouteReturnsUnifiedNotFound() throws Exception {
-        mvc.perform(get("/api/does-not-exist"))
+    void unknownRouteReturnsUnifiedNotFound() throws Exception {
+        // /api/** 默认需要登录（T-010），匿名访问未知 /api 路由为 401；已登录时的 404 见 AuthControllerIT
+        mvc.perform(get("/does-not-exist"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"))
                 .andExpect(jsonPath("$.message").value("资源不存在"));
