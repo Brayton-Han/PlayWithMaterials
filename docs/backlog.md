@@ -64,6 +64,8 @@ flowchart TD
   T043 --> T046[T-046 后端核心测试]
   T044 --> T046
   T045 --> T046
+  T043 --> T047[T-047 用户文件访问控制]
+  T047 --> T046
 
   T003 --> T050[T-050 任务 store]
   T045 --> T051[T-051 跟踪调度器]
@@ -167,7 +169,7 @@ flowchart TD
 - **相关**：F-28, F-19
 
 #### T-020 模板接口 · S · P0
-- **范围**：`GET /api/categories`（一级）、`GET /api/templates?categoryId=`、`GET /api/templates/{id}`（不存在时返回 404 + `TEMPLATE_NOT_FOUND`）；静态文件映射（种子封面、结果图、用户素材）。
+- **范围**：`GET /api/categories`（一级）、`GET /api/templates?categoryId=`、`GET /api/templates/{id}`（不存在时返回 404 + `TEMPLATE_NOT_FOUND`）；种子封面的静态文件映射（`/files/seed/**`）；用户素材和结果图不做静态映射，由 T-047 提供。
 - **依赖**：T-004, T-021
 - **完成定义**：Controller / Mapper 测试覆盖全部、按分类、不存在三种情况；封面 URL 可在浏览器打开。
 - **相关**：F-01, F-02
@@ -273,6 +275,12 @@ flowchart TD
 - **受 OQ 影响**：OQ-09 余项（分页）
 - **完成定义**：F-07 验收标准通过；测试：用户 A 在模板 X、Y 各有任务，带 templateId=X 只返回 X 的任务，不带时两者都返回；用户 B 看不到。
 - **相关**：F-07, F-11
+
+#### T-047 用户文件访问控制 · S · P0
+- **范围**（DQ-02 已确认）：`/files/uploads/**`、`/files/results/**` 改由 Controller 提供：需要登录，查库确认文件属于当前用户的任务后返回，否则 404；只用数据库中的存储路径读文件；`Cache-Control: private, no-store`。删除账户后这些链接失效。
+- **依赖**：T-040, T-041, T-043
+- **完成定义**：集成测试：本人 200；匿名 401；他人 404；删除账户后原链接对任何人都打不开，文件仍在磁盘上。
+- **相关**：F-03, F-28
 
 #### T-046 后端核心测试 · M · P0
 - **范围**：
