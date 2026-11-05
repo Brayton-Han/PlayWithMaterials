@@ -12,7 +12,7 @@
 2. **纵向切片**：每个里程碑结束时都能演示一段完整功能（见 §2），不做"先写完全部后端再写前端"。
 3. **完成定义（每个任务通用）**：
    - 该任务的验证项（§3）全部通过；
-   - `mvn -B verify` 与 `npm run lint && npm run typecheck && npm test && npm run build` 本地通过，T-006 之后 CI 为绿色；
+   - 后端 `./mvnw -B verify` 与前端 `npm run lint && npm run typecheck && npm test && npm run build` 在开发容器中通过（命令见 §0.1），T-006 之后 CI 为绿色；
    - 新增的配置项写入 `application.yml` 注释和 `.env.example`；
    - 与本文、api.yaml、database.md 不一致的地方，在同一 PR 中更新文档。
 4. **分支与提交**：一个任务一个分支、一个 PR；数据库变更只追加新的 Flyway 迁移，不修改已合并的迁移。
@@ -144,7 +144,7 @@ flowchart TD
 
 | 阶段 | 后端泳道 | 前端泳道 | 阶段结束时可演示 / 检查点 |
 | --- | --- | --- | --- |
-| **S0 骨架** | T-001 → T-002 → T-005 → T-004 | T-003 | 健康检查 UP；空库启动后表与种子就绪；前端能调用 `/actuator/health` |
+| **S0 骨架** | T-001 → T-002 → T-005 → T-004 | T-003 | `docker compose -f docker-compose.dev.yml up --build` 一条命令启动全部服务；健康检查 UP；空库启动后表与种子就绪；前端能调用 `/actuator/health` |
 | | T-006（前后端都完成后） | | 第一次绿色 CI |
 | **S1 身份 + 目录** | T-010 → T-021 → T-020 | T-011 → T-022 → T-023 | 注册、登录、退出、切换用户；浏览、筛选模板；进入详情页；未登录看不到上传区 |
 | **S2 异步核心（后端）** | T-040 → T-045 → T-030 → T-041 → T-042 → T-043 → T-044 → T-047 → T-046 | T-050（store 纯函数，可提前） → T-031 → T-032 | **curl 完整闭环**：提交 → 三步执行 → 成功 / 指定阶段失败；前端：选图、预览、上传进度（可先对着 MSW） |
@@ -166,9 +166,9 @@ S2 之所以把后端异步核心整体前置：它是 PRD 的首要考察点，
 
 | 任务 | 按本架构的产出 | 自动验证 | 手动验证 |
 | --- | --- | --- | --- |
-| T-001 | `frontend/`、`backend/`、`docs/`、根目录 `docker-compose.yml`（占位）、`docker-compose.dev.yml`、`.gitignore`、`.editorconfig`、`.env.example`、README 骨架 | — | `git status` 没有 `node_modules`、`target`、`.next`、`data/` |
+| T-001 | `frontend/`、`backend/`、`docs/`、根目录 `docker-compose.yml`、`docker-compose.dev.yml`、`.gitignore`、`.editorconfig`、`.env.example`、README 骨架 | — | `git status` 没有 `node_modules`、`target`、`.next`、`data/` |
 | T-002 | Spring Boot 工程（版本按 architecture §2 验证后锁定）；`common.error`：`ErrorCode`、`ApiException`、`ErrorResponse`、`GlobalExceptionHandler`（含 `MaxUploadSizeExceededException → 413`、`NoResourceFoundException → 404 NOT_FOUND`、`MethodArgumentNotValidException → 400 VALIDATION_FAILED`、`HttpRequestMethodNotSupportedException → 405`、兜底 500）；Actuator 只暴露 health；JVM / JDBC 时区 UTC；`dev`/`test`/`demo`/`prod` profile | `GlobalExceptionHandlerTest`（MockMvc）：每类异常的 HTTP 状态和 `{code,message}` 结构与 api.yaml 一致；500 响应不含堆栈 | `curl $API/actuator/health` → `{"status":"UP"}` |
-| T-003 | Next.js + TS strict + ESLint + Tailwind；`next.config` rewrites `/api/:path*`、`/files/:path*` → `BACKEND_INTERNAL_URL`；**不创建 middleware / proxy.ts**；`lib/api/client.ts`（`ApiError{kind,status,code,message,details}`、AbortSignal）；`npm run gen:api`（openapi-typescript → `lib/api/schema.d.ts`）；Vitest + RTL + MSW 初始化 | `client.test.ts`：网络错误 → `kind:'network'`；4xx/5xx JSON → `kind:'http'` 带 `code`；非 JSON 的 5xx 也能转成 `ApiError`；abort 不被当成错误上报 | `npm run dev` 后页面显示后端健康状态；四个脚本全部通过 |
+| T-003 | Next.js + TS strict + ESLint + Tailwind；`next.config` rewrites `/api/:path*`、`/files/:path*` → `BACKEND_INTERNAL_URL`；**不创建 middleware / proxy.ts**；`lib/api/client.ts`（`ApiError{kind,status,code,message,details}`、AbortSignal）；`npm run gen:api`（openapi-typescript → `lib/api/schema.d.ts`）；Vitest + RTL + MSW 初始化 | `client.test.ts`：网络错误 → `kind:'network'`；4xx/5xx JSON → `kind:'http'` 带 `code`；非 JSON 的 5xx 也能转成 `ApiError`；abort 不被当成错误上报 | dev compose 启动后 `:3000` 页面显示后端健康状态；四个脚本在容器内全部通过 |
 | T-005 | `docker-compose.dev.yml`：mysql:8.4（数据卷、`utf8mb4_0900_ai_ci`）+ backend / frontend 开发容器（`Dockerfile` 的 `dev` 目标、源码挂载）；`backend/Dockerfile`、`frontend/Dockerfile`（多阶段：dev / build / runtime） | — | `docker compose -f docker-compose.dev.yml up --build` 后 `:3000` 页面显示后端 UP；修改前端代码即时生效；容器内 `./mvnw -B verify` 通过 |
 | T-004 | `db/migration/V1__init_schema.sql`（database.md §2 全部表、约束、索引，不含 `task_step_logs`）、`V2__seed_data.sql`（database.md §5） | `MigrationIT`（Testcontainers）：迁移成功；`information_schema` 中存在 database.md 列出的每个唯一索引和 CHECK；插入 `status='SUCCEEDED' AND result_url IS NULL` 被 CHECK 拒绝；插入大小写不同的重复用户名被拒绝；`active_email` 在 `deleted_at` 非空时为 NULL | 空库启动后 `SELECT COUNT(*) FROM templates` ≥ 3；重启后种子不重复 |
 | T-006 | `.github/workflows/ci.yml`：`push` / `pull_request`；frontend job（`npm ci` → lint → typecheck → test → build）；backend job（JDK 21 → `./mvnw -B verify`，Ubuntu runner 自带 Docker 供 Testcontainers 使用）；docker job（`docker compose up --build --wait` 冒烟：三个服务 healthy、经 `:3000` 访问 health 为 UP） | CI 本身 | 推一个故意的类型错误分支，frontend job 失败 |
@@ -205,7 +205,7 @@ S2 之所以把后端异步核心整体前置：它是 PRD 的首要考察点，
 | T-044 | `SimulationProperties`（`app.simulation.*`）、`SimulationSettings`（`AtomicReference`）、`DevSimulationController`（`@Profile({"dev","demo"})`） | `DevSimulationControllerIT`：GET 返回默认值；PUT 合法值后 GET 一致；负数 / 超过 60000 / 非法阶段名 → 400；`prod` profile 下 404。`SimulationSnapshotIT`：改配置前创建的任务仍按旧快照执行 | `curl -X PUT $API/api/dev/simulation -H 'Content-Type: application/json' -d '{"assetCheckMs":1000,"generatingMs":5000,"resultOrganizingMs":1000,"failStage":"GENERATING","failReason":null}'` 后连续提交两个任务，都在 GENERATING 失败 |
 | T-045 | `TaskController.get`、`TaskController.list`（`templateId`；`ids` 参数先在契约中定义，T-073 再实现）；`TaskQueryService` 只读（类上 `@Transactional(readOnly = true)`） | `TaskQueryIT`：A 在模板 X、Y 各有任务，`?templateId=X` 只返回 X；不带参数两者都返回且按 `createdAt` 倒序；B 查 A 的 taskId → 404；B 的列表不含 A 的任务；非数字 taskId → 400；`inputAssets` 按 slotIndex 升序 | — |
 | T-047（新增，S） | DQ-02：`storage.web.UserFileController` 提供 `/files/uploads/{yyyy}/{mm}/{fileName}`、`/files/results/{taskId}/{fileName}`；`AuthInterceptor` 覆盖这两个前缀；按 database.md Q13 / Q14 查归属，只用数据库中的 `storage_key` 读文件；`Cache-Control: private, no-store`。依赖 T-040、T-041、T-043 | `UserFileControllerIT`：本人 200 且 Content-Type 正确；匿名 401；他人 404；不存在 404；`fileName` 含 `..` 或不符合格式 404 / 400；删除账户后本人原 Cookie 401、其他用户 404 | 浏览器中任务卡片的缩略图和结果图正常显示；退出后直接打开图片链接返回 401 |
-| T-046 | 汇总下表的后端核心测试 | 见下表 | `mvn -B verify` 本地与 CI 都通过 |
+| T-046 | 汇总下表的后端核心测试 | 见下表 | `./mvnw -B verify` 在开发容器与 CI 中都通过 |
 
 **T-046 后端核心测试清单**（对应 requirements F-15 后端条目）：
 
@@ -248,7 +248,7 @@ S2 之所以把后端异步核心整体前置：它是 PRD 的首要考察点，
 
 | 任务 | 按本架构的产出 | 自动验证 | 手动验证 |
 | --- | --- | --- | --- |
-| T-060 | CI 加入 Maven / npm 缓存；backend job 运行全部 IT（Testcontainers）；可选增加 `npm run gen:api && git diff --exit-code` 检查契约与生成类型一致 | CI 本身 | 推一个故意失败的测试，对应 job 失败 |
+| T-060 | 确认 backend job 运行全部 IT（Testcontainers）、docker job 覆盖演示环境；Maven / npm 缓存与 `gen:api` 同步检查已在 T-006 中完成，此处只按需补充 | CI 本身 | 推一个故意失败的测试，对应 job 失败 |
 | T-062 | Dockerfile 与 `docker-compose.yml`（architecture §1.2：健康检查、`depends_on: condition: service_healthy`、`mysql-data`、`storage-data` 两个卷、`SPRING_PROFILES_ACTIVE=demo`）已在 S0 提前完成；本任务只做功能闭环后的验收与调整（如上传文件写入数据卷、`IMAGE_TAG` 回滚说明） | — | 见下方"验收演示脚本"全部步骤；`docker compose down && docker compose up` 后历史和图片仍在；经 `:3000` 上传一个约 15 MB（3 × 5 MB）的请求成功，确认 rewrites 不截断请求体 |
 | T-061 | README（requirements F-16 清单逐项） | — | 另一个人只看 README 完成验收演示脚本 |
 
@@ -313,9 +313,9 @@ DQ-01 ~ DQ-04 的说明见 [architecture.md §11](./architecture.md#11-本文涉
 
 | 风险 | 影响 | 应对 | 在哪个任务中尽早验证 |
 | --- | --- | --- | --- |
-| Spring Boot 主版本与 mybatis-spring-boot-starter / Flyway MySQL 模块不兼容 | M0 延期 | T-002 第一天就跑通"连接 MySQL + Flyway + 一个 Mapper 查询"；不兼容则退回 Boot 3.5.x | T-002 |
+| Spring Boot 主版本与 mybatis-spring-boot-starter / Flyway MySQL 模块不兼容 | M0 延期 | T-002 第一天就跑通"连接 MySQL + Flyway + 一个 Mapper 查询"；不兼容则退回 Boot 3.5.x | T-002（**已在 S0 消除**：Boot 4.0.9 + starter 4.0.1 + flyway-mysql 通过 Testcontainers 集成测试） |
 | Next.js rewrites 截断或缓冲大文件上传、丢失 `Set-Cookie` | 上传失败 / 登录态丢失 | 不使用 middleware；T-010 后立即经 `:3000` 验证登录 Cookie；T-041 后经 `:3000` 上传 15 MB | T-010、T-041 |
-| standalone 构建时 rewrites 目标被固化为 localhost | 容器中前端无法访问后端 | Dockerfile 用构建参数注入 `BACKEND_INTERNAL_URL` | T-062 |
+| standalone 构建时 rewrites 目标被固化为 localhost | 容器中前端无法访问后端 | Dockerfile 用构建参数注入 `BACKEND_INTERNAL_URL` | T-005（**已在 S0 处理**：`frontend/Dockerfile` 构建参数，CI docker job 冒烟） |
 | Testcontainers 在 CI 中拉镜像慢 | CI 变慢 | 复用单个容器（`@Testcontainers` 静态容器 + 单例模式）；必要时改用 `services: mysql` | T-004、T-060 |
 | 时间相关测试不稳定 | CI 偶发失败 | 后端用 Awaitility + 短耗时配置（每阶段 50 ~ 200 ms）；前端统一用 fake timers | T-046、T-056 |
 | 演示时后端重启导致任务永远处理中 | 演示失败 | README 说明 OQ-13 边界；演示脚本避开；T-072 视结论实现 | T-061 |
