@@ -1,11 +1,16 @@
-import { BackendStatus } from "@/features/health/BackendStatus";
+import { Suspense } from "react";
+
+import { TemplateGridSkeleton } from "@/features/catalog/TemplateGrid";
+import { TemplateListPage } from "@/features/catalog/TemplateListPage";
 
 export default function Home() {
   return (
-    <section className="flex flex-col gap-4">
+    <section className="flex flex-col gap-6">
       <h1 className="text-2xl font-semibold">模板</h1>
-      <p className="text-zinc-600 dark:text-zinc-400">模板列表将在 T-022 中实现。</p>
-      <BackendStatus />
+      {/* TemplateListPage 读取 ?category=，useSearchParams 需要 Suspense 边界才能预渲染页面其余部分 */}
+      <Suspense fallback={<TemplateGridSkeleton />}>
+        <TemplateListPage />
+      </Suspense>
     </section>
   );
 }
