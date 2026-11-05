@@ -2,7 +2,7 @@
 
 选择模板 → 上传图片 → 后端异步执行"素材检查 → 生成 → 结果整理"三步 → 前端跟踪任务状态并展示结果。
 
-> 当前进度：**S0 工程骨架**（T-001 ~ T-006）。功能按 [docs/implementation-plan.md](docs/implementation-plan.md) 的阶段逐步实现。
+> 当前进度：**S0 工程骨架**（T-001 ~ T-006）已完成；**S1 身份 + 目录**进行中（已完成 T-010 后端注册 / 登录 / 退出）。功能按 [docs/implementation-plan.md](docs/implementation-plan.md) 的阶段逐步实现。
 
 ## 文档
 

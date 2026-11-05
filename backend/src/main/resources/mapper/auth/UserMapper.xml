@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xiaoying.auth.mapper.UserMapper">
+
+    <sql id="columns">id, username, email, password_hash, created_at</sql>
+
+    <!-- uk_users_username 含已删除账户；_ci 排序规则使比较不区分大小写 -->
+    <select id="existsByUsername" resultType="boolean">
+        SELECT EXISTS (SELECT 1 FROM users WHERE username = #{username})
+    </select>
+
+    <!-- active_email 只在未删除时有值，且已转小写 -->
+    <select id="existsActiveEmail" resultType="boolean">
+        SELECT EXISTS (SELECT 1 FROM users WHERE active_email = LOWER(#{email}))
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO users (username, email, password_hash, created_at, updated_at)
+        VALUES (#{username}, #{email}, #{passwordHash}, #{createdAt}, #{createdAt})
+    </insert>
+
+    <select id="findActiveByUsername" resultType="com.xiaoying.auth.domain.User">
+        SELECT <include refid="columns"/> FROM users
+        WHERE username = #{username} AND deleted_at IS NULL
+    </select>
+
+    <select id="findActiveById" resultType="com.xiaoying.auth.domain.User">
+        SELECT <include refid="columns"/> FROM users
+        WHERE id = #{id} AND deleted_at IS NULL
+    </select>
+</mapper>
