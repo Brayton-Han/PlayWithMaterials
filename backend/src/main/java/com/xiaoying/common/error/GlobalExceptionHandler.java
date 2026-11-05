@@ -159,8 +159,8 @@ public class GlobalExceptionHandler {
         return (codes == null || codes.length == 0) ? null : codes[codes.length - 1];
     }
 
-    /** Bean Validation 约束名 → api.yaml FieldError.code。 */
-    static String fieldCode(String constraint) {
+    /** Bean Validation 约束名 → api.yaml FieldError.code（手动校验的 Controller 也用它，保持错误码一致）。 */
+    public static String fieldCode(String constraint) {
         if (constraint == null) {
             return "INVALID_VALUE";
         }

@@ -61,6 +61,9 @@ import tools.jackson.databind.json.JsonMapper;
  * </ul>
  */
 @SpringBootTest(properties = {
+        // 专用存储目录：断言 results/{taskId}/ 下只有本任务的文件，不能与其他测试上下文（各自的 MySQL、taskId 都从 1 开始）
+        // 或容器环境变量 APP_STORAGE_ROOT 指向的 dev 数据卷共用目录
+        "app.storage.root=${java.io.tmpdir}/xiaoying-task-steps-it",
         "app.simulation.asset-check-ms=0",
         "app.simulation.generating-ms=0",
         "app.simulation.result-organizing-ms=0"})

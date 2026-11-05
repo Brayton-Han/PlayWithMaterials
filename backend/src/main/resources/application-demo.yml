@@ -2,3 +2,7 @@
 logging:
   level:
     com.xiaoying: INFO
+app:
+  simulation:
+    # 开放 /api/dev/simulation 供 curl 调整模拟耗时 / 指定失败阶段（T-044）
+    dev-api-enabled: true

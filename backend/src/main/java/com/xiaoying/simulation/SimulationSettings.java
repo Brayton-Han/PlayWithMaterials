@@ -1,7 +1,10 @@
 package com.xiaoying.simulation;
 
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
 
@@ -9,12 +12,13 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 当前生效的全局模拟配置（architecture §5.3，内存 {@link AtomicReference}，线程安全）。
- * 启动时取 {@link SimulationProperties}；运行时修改接口由 T-044 增加。
+ * 启动时取 {@link SimulationProperties}；dev / demo profile 下可由 {@code PUT /api/dev/simulation} 运行时替换（T-044）。
  */
 @Component
 @EnableConfigurationProperties(SimulationProperties.class)
 public class SimulationSettings {
 
+    private static final Logger log = LoggerFactory.getLogger(SimulationSettings.class);
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private final AtomicReference<SimulationConfig> current;
@@ -25,6 +29,16 @@ public class SimulationSettings {
 
     public SimulationConfig current() {
         return current.get();
+    }
+
+    /**
+     * 整体替换当前配置（{@code PUT /api/dev/simulation}）。只影响之后创建的任务 [OQ-10]；不持久化，
+     * 进程重启后回到 {@link SimulationProperties}。调用方负责校验取值范围。
+     */
+    public SimulationConfig update(SimulationConfig config) {
+        current.set(Objects.requireNonNull(config, "config"));
+        log.info("Simulation config updated: {}", config);
+        return config;
     }
 
     /**

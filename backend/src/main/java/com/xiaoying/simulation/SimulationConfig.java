@@ -11,4 +11,10 @@ import com.xiaoying.task.domain.TaskStage;
  */
 public record SimulationConfig(long assetCheckMs, long generatingMs, long resultOrganizingMs,
                                TaskStage failStage, String failReason) {
+
+    /** 单个阶段耗时上限（ms，api.yaml SimulationConfig maximum）。 */
+    public static final int MAX_STAGE_MS = 60_000;
+
+    /** 自定义失败原因最大长度（api.yaml SimulationConfig.failReason maxLength）。 */
+    public static final int MAX_FAIL_REASON_LENGTH = 200;
 }

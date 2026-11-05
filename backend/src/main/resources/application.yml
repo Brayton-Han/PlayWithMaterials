@@ -37,7 +37,7 @@ app:
     root: ${APP_STORAGE_ROOT:/data/storage}
   simulation:
     # 模拟制作的默认配置（architecture §7），创建任务时快照到 tasks.sim_config [OQ-10]。
-    # 环境变量覆盖：APP_SIMULATION_ASSET_CHECK_MS、APP_SIMULATION_FAIL_STAGE 等；运行时修改接口见 T-044
+    # 环境变量覆盖：APP_SIMULATION_ASSET_CHECK_MS、APP_SIMULATION_FAIL_STAGE 等；超出范围（0 ~ 60000 ms、原因 ≤ 200 字）时启动失败
     asset-check-ms: 1500
     generating-ms: 3000
     result-organizing-ms: 1500
@@ -45,6 +45,9 @@ app:
     fail-stage:
     # 空 = 使用按阶段的默认文案 [OQ-11]
     fail-reason:
+    # 是否注册 GET/PUT /api/dev/simulation（运行时修改、不持久化、不需要登录 DQ-01）。
+    # 只在 application-dev.yml / application-demo.yml 中打开；其他 profile（含 prod）下该接口 404
+    dev-api-enabled: false
   task:
     executor:
       # 任务执行线程池 [OQ-12 临时默认]：核心 = 最大 = pool-size；队列满时拒绝受理（503 QUEUE_FULL，不建任务）。
