@@ -1,57 +1,15 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 import { ErrorState } from "@/components/ErrorState";
-import { isAbortError, isApiError } from "@/lib/api/client";
 import { listCategories, listTemplates, type Category, type TemplateSummary } from "@/lib/api/endpoints/catalog";
+import { useKeyedLoad, type LoadOutcome } from "@/lib/useKeyedLoad";
 
 import { CategoryTabs } from "./CategoryTabs";
+import { CATEGORY_QUERY_KEY, rememberListCategory } from "./listReturn";
 import { TemplateGrid, TemplateGridSkeleton } from "./TemplateGrid";
-
-/** URL 中的分类参数（architecture §6：`/?category=`）。 */
-export const CATEGORY_QUERY_KEY = "category";
-
-const FALLBACK_ERROR_MESSAGE = "加载失败，请稍后重试";
-const INTERRUPTED_MESSAGE = "加载被中断，请重试";
-
-type Outcome<T> = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: T };
-
-/**
- * 按 key 加载数据：key 变化或重试时 abort 旧请求；结果按 (key, attempt) 归属，
- * 只有与当前 key 匹配的结果才会展示，较慢的旧响应不会覆盖新结果（F-01 验收 3）。
- * key 为 null 表示依赖尚未就绪，保持 loading 且不发请求。
- */
-function useKeyedLoad<T>(key: string | null, load: (key: string, signal: AbortSignal) => Promise<T>) {
-  const [attempt, setAttempt] = useState(0);
-  const [settled, setSettled] = useState<{ key: string; attempt: number; outcome: Outcome<T> } | null>(null);
-
-  useEffect(() => {
-    if (key === null) return;
-    const controller = new AbortController();
-    load(key, controller.signal).then(
-      (data) => {
-        if (!controller.signal.aborted) setSettled({ key, attempt, outcome: { status: "ready", data } });
-      },
-      (error: unknown) => {
-        if (controller.signal.aborted) return;
-        // 被会话级取消（退出登录时 abortAllRequests）的请求不能卡在 loading，转为可重试的错误
-        const message = isAbortError(error)
-          ? INTERRUPTED_MESSAGE
-          : isApiError(error)
-            ? error.message
-            : FALLBACK_ERROR_MESSAGE;
-        setSettled({ key, attempt, outcome: { status: "error", message } });
-      },
-    );
-    return () => controller.abort();
-  }, [key, attempt, load]);
-
-  const outcome: Outcome<T> =
-    settled && settled.key === key && settled.attempt === attempt ? settled.outcome : { status: "loading" };
-  return { outcome, retry: () => setAttempt((n) => n + 1) };
-}
 
 const CATEGORIES_KEY = "categories";
 /** "全部"对应的模板请求 key（分类 ID 为非空 slug，不会冲突）。 */
@@ -90,6 +48,11 @@ export function TemplateListPage() {
 
   const templates = useKeyedLoad(known === null ? null : (selected ?? ALL_TEMPLATES_KEY), loadTemplates);
 
+  // 记住已确认的筛选，详情页的"返回"据此回到原分类（F-02 验收 4）；分类未加载 / 未知分类时不记录
+  useEffect(() => {
+    if (known !== null) rememberListCategory(selected);
+  }, [known, selected]);
+
   if (categories.outcome.status === "error") {
     return <ErrorState message={categories.outcome.message} onRetry={categories.retry} />;
   }
@@ -115,7 +78,7 @@ function TemplateResults({
   onRetry,
   filtered,
 }: {
-  outcome: Outcome<TemplateSummary[]>;
+  outcome: LoadOutcome<TemplateSummary[]>;
   onRetry: () => void;
   filtered: boolean;
 }) {

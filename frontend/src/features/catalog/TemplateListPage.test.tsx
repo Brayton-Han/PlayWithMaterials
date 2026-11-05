@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Category, TemplateSummary } from "@/lib/api/endpoints/catalog";
 import { server } from "@/test/msw/server";
 
+import { listPageHref, rememberListCategory } from "./listReturn";
 import { TemplateListPage } from "./TemplateListPage";
 
 vi.mock("next/navigation", async () => (await import("@/test/navigation")).mockUrlNavigation());
@@ -57,6 +58,7 @@ function tab(name: string) {
 
 beforeEach(() => {
   templateRequests = [];
+  rememberListCategory(null);
   setUrl("/");
 });
 
@@ -236,5 +238,22 @@ describe("TemplateListPage", () => {
     expect(within(card).getByRole("img", { name: "封面加载失败" })).toBeInTheDocument();
     expect(card).toHaveTextContent("旅行明信片");
     expect(card).toHaveAttribute("href", "/templates/demo-postcard");
+  });
+
+  it("remembers the confirmed category for the detail page's back link (unknown categories are not kept)", async () => {
+    useCatalogHandlers();
+    setUrl("/?category=portrait");
+    render(<TemplateListPage />);
+
+    await waitFor(() => expect(cardTitles()).toEqual(["复古写真"]));
+    expect(listPageHref()).toBe("/?category=portrait");
+
+    await userEvent.click(tab("全部"));
+    await waitFor(() => expect(cardTitles()).toHaveLength(3));
+    expect(listPageHref()).toBe("/");
+
+    act(() => setUrl("/?category=nope"));
+    await screen.findByText(/未找到分类/);
+    expect(listPageHref()).toBe("/");
   });
 });

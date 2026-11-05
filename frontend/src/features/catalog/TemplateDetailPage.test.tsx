@@ -1,0 +1,226 @@
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { AuthProvider } from "@/features/auth/AuthProvider";
+import type { TemplateDetail } from "@/lib/api/endpoints/catalog";
+import { makeUser } from "@/test/fixtures";
+import { server } from "@/test/msw/server";
+
+import { rememberListCategory } from "./listReturn";
+import { TemplateDetailPage } from "./TemplateDetailPage";
+import { formatFileSize } from "./TemplateRequirements";
+
+const nav = vi.hoisted(() => ({ router: { push: vi.fn(), replace: vi.fn() }, search: "" }));
+vi.mock("next/navigation", async () => (await import("@/test/navigation")).mockNavigation(nav));
+
+const POSTCARD: TemplateDetail = {
+  templateId: "demo-postcard",
+  title: "旅行明信片",
+  description: "上传图片，模拟生成一张明信片",
+  categoryId: "creative",
+  categoryName: "创意图片",
+  coverUrl: "/files/seed/covers/postcard.jpg",
+  requiredImageCount: 2,
+  acceptedMimeTypes: ["image/jpeg", "image/png", "image/webp"],
+  maxFileSizeBytes: 5 * 1024 * 1024,
+};
+
+const notFound = () =>
+  HttpResponse.json({ code: "TEMPLATE_NOT_FOUND", message: "模板不存在" }, { status: 404 });
+const anonymous = () => HttpResponse.json({ code: "UNAUTHENTICATED", message: "请先登录" }, { status: 401 });
+const loggedIn = () => HttpResponse.json(makeUser("demo1"));
+
+/** 记录每次详情请求的路径参数。 */
+let detailRequests: string[] = [];
+
+function useTemplateHandler(respond: (templateId: string) => Response | Promise<Response>) {
+  server.use(
+    http.get("/api/templates/:templateId", ({ params }) => {
+      const templateId = String(params.templateId);
+      detailRequests.push(templateId);
+      return respond(templateId);
+    }),
+  );
+}
+
+function useCatalog(templates: TemplateDetail[]) {
+  useTemplateHandler((id) => {
+    const found = templates.find((t) => t.templateId === id);
+    return found ? HttpResponse.json(found) : notFound();
+  });
+}
+
+function renderPage(templateId: string, me: () => Response = anonymous) {
+  server.use(http.get("/api/auth/me", me));
+  return render(
+    <AuthProvider>
+      <TemplateDetailPage templateId={templateId} />
+    </AuthProvider>,
+  );
+}
+
+function backLink() {
+  return screen.getByRole("link", { name: "← 返回模板列表" });
+}
+
+beforeEach(() => {
+  detailRequests = [];
+  rememberListCategory(null);
+  window.history.replaceState(null, "", "/templates/demo-postcard");
+});
+
+describe("TemplateDetailPage", () => {
+  it("shows a loading placeholder without upload slots, then the template from the API", async () => {
+    useCatalog([POSTCARD]);
+    renderPage("demo-postcard", loggedIn);
+
+    expect(screen.getByRole("status", { name: "模板详情加载中" })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "上传位" })).not.toBeInTheDocument();
+
+    expect(await screen.findByRole("heading", { level: 1, name: "旅行明信片" })).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "模板详情加载中" })).not.toBeInTheDocument();
+    expect(screen.getByText("创意图片")).toBeInTheDocument();
+    expect(screen.getByText("上传图片，模拟生成一张明信片")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "旅行明信片 示例封面" })).toHaveAttribute(
+      "src",
+      "/files/seed/covers/postcard.jpg",
+    );
+    expect(detailRequests).toEqual(["demo-postcard"]);
+  });
+
+  it("shows the asset requirements from the API", async () => {
+    useCatalog([{ ...POSTCARD, requiredImageCount: 3, acceptedMimeTypes: ["image/jpeg", "image/png"] }]);
+    renderPage("demo-postcard");
+
+    const requirements = await screen.findByRole("region", { name: "素材要求" });
+    const values = within(requirements)
+      .getAllByRole("definition")
+      .map((dd) => dd.textContent);
+    expect(values).toEqual(["3 张", "JPG / PNG", "5 MB"]);
+  });
+
+  it.each([1, 2, 3])("renders %i upload slot(s) for a logged-in user", async (count) => {
+    useCatalog([{ ...POSTCARD, requiredImageCount: count }]);
+    renderPage("demo-postcard", loggedIn);
+
+    const slots = await screen.findByRole("list", { name: "上传位" });
+    expect(within(slots).getAllByRole("listitem")).toHaveLength(count);
+    expect(screen.queryByText("登录后即可制作")).not.toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "History" })).toBeInTheDocument();
+  });
+
+  it("replaces the upload area and History with a login prompt for anonymous users", async () => {
+    useCatalog([POSTCARD]);
+    renderPage("demo-postcard");
+
+    await screen.findByRole("heading", { level: 1, name: "旅行明信片" });
+    // 模板信息照常可见
+    expect(screen.getByRole("region", { name: "素材要求" })).toBeInTheDocument();
+
+    const upload = screen.getByRole("region", { name: "上传素材" });
+    const history = screen.getByRole("complementary", { name: "History" });
+    expect(await within(upload).findByText("登录后即可制作")).toBeInTheDocument();
+    expect(within(history).getByText("登录后即可制作")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "上传位" })).not.toBeInTheDocument();
+
+    // 登录 / 注册后回到本页
+    expect(within(upload).getByRole("link", { name: "登录" })).toHaveAttribute(
+      "href",
+      "/login?next=%2Ftemplates%2Fdemo-postcard",
+    );
+    expect(within(upload).getByRole("link", { name: "注册新账户" })).toHaveAttribute(
+      "href",
+      "/register?next=%2Ftemplates%2Fdemo-postcard",
+    );
+    // 详情页不强制跳转登录
+    expect(nav.router.replace).not.toHaveBeenCalled();
+  });
+
+  it("shows 模板不存在 with a way back to the list on 404", async () => {
+    useCatalog([POSTCARD]);
+    renderPage("no-such-template");
+
+    expect(await screen.findByRole("heading", { name: "模板不存在" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "返回模板列表" })).toHaveAttribute("href", "/");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "上传素材" })).not.toBeInTheDocument();
+    expect(detailRequests).toEqual(["no-such-template"]);
+  });
+
+  it("treats an overlong or odd template ID as not found (encoded in the request path)", async () => {
+    useCatalog([POSTCARD]);
+    const odd = `${"x".repeat(80)}/../a b`;
+    renderPage(odd);
+
+    expect(await screen.findByRole("heading", { name: "模板不存在" })).toBeInTheDocument();
+    expect(detailRequests).toEqual([odd]);
+  });
+
+  it("shows a load failure with retry on 500, not 模板不存在, and recovers after retry", async () => {
+    let fail = true;
+    useTemplateHandler(() =>
+      fail
+        ? HttpResponse.json({ code: "INTERNAL_ERROR", message: "服务器内部错误" }, { status: 500 })
+        : HttpResponse.json(POSTCARD),
+    );
+    renderPage("demo-postcard");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("模板加载失败");
+    expect(screen.queryByText("模板不存在")).not.toBeInTheDocument();
+
+    fail = false;
+    await userEvent.click(within(alert).getByRole("button", { name: "重试" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "旅行明信片" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(detailRequests).toEqual(["demo-postcard", "demo-postcard"]);
+  });
+
+  it("shows a load failure (not 不存在) when the backend is unreachable", async () => {
+    useTemplateHandler(() => HttpResponse.error());
+    renderPage("demo-postcard");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("网络连接异常");
+    expect(screen.queryByText("模板不存在")).not.toBeInTheDocument();
+  });
+
+  it("treats a 404 without TEMPLATE_NOT_FOUND (e.g. proxy HTML) as a load failure", async () => {
+    useTemplateHandler(() => new HttpResponse("<html>Not Found</html>", { status: 404 }));
+    renderPage("demo-postcard");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("模板加载失败");
+    expect(screen.queryByText("模板不存在")).not.toBeInTheDocument();
+  });
+
+  it("back link returns to the list with the category the user came from", async () => {
+    useCatalog([POSTCARD]);
+    rememberListCategory("portrait");
+    renderPage("demo-postcard");
+
+    await screen.findByRole("heading", { level: 1, name: "旅行明信片" });
+    expect(backLink()).toHaveAttribute("href", "/?category=portrait");
+  });
+
+  it("back link goes to the full list when the page was opened directly", async () => {
+    useCatalog([POSTCARD]);
+    renderPage("demo-postcard");
+
+    expect(backLink()).toHaveAttribute("href", "/");
+    await screen.findByRole("heading", { level: 1, name: "旅行明信片" });
+    expect(backLink()).toHaveAttribute("href", "/");
+  });
+});
+
+describe("formatFileSize", () => {
+  it.each([
+    [5 * 1024 * 1024, "5 MB"],
+    [1.5 * 1024 * 1024, "1.5 MB"],
+    [500 * 1024, "500 KB"],
+    [999, "999 B"],
+  ])("%i → %s", (bytes, label) => {
+    expect(formatFileSize(bytes)).toBe(label);
+  });
+});

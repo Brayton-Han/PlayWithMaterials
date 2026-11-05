@@ -16,3 +16,10 @@ export function listTemplates(categoryId: string | null, signal?: AbortSignal): 
   const query = categoryId ? `?${new URLSearchParams({ categoryId }).toString()}` : "";
   return apiRequest<TemplateSummaryList>(`/api/templates${query}`, { signal });
 }
+
+export type TemplateDetail = components["schemas"]["TemplateDetail"];
+
+/** 模板详情与素材要求；不存在 → 404 TEMPLATE_NOT_FOUND（api.yaml getTemplate）。 */
+export function getTemplate(templateId: string, signal?: AbortSignal): Promise<TemplateDetail> {
+  return apiRequest<TemplateDetail>(`/api/templates/${encodeURIComponent(templateId)}`, { signal });
+}
