@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xiaoying.task.mapper.TaskMapper">
+
+    <!-- 枚举列按名称映射（MyBatis 默认 EnumTypeHandler），与 CHECK 约束中的取值一致 -->
+    <sql id="taskView">
+        SELECT t.id, t.user_id, t.template_id, tp.title AS template_title, tp.cover_url AS template_cover_url,
+               t.status, t.stage, t.failed_stage, t.failure_code, t.failure_reason, t.result_url, t.sim_config,
+               t.created_at, t.started_at, t.finished_at, t.updated_at
+        FROM tasks t
+        JOIN templates tp ON tp.id = t.template_id
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        INSERT INTO tasks (user_id, template_id, status, stage, sim_config)
+        VALUES (#{userId}, #{templateId}, 'PENDING', NULL, #{simConfig})
+    </insert>
+
+    <!-- Q6：走 tasks PK -->
+    <select id="findByIdAndUser" resultType="com.xiaoying.task.domain.Task">
+        <include refid="taskView"/>
+        WHERE t.id = #{id} AND t.user_id = #{userId}
+    </select>
+
+    <!-- Q7 idx_tasks_user_template_created / Q8 idx_tasks_user_created -->
+    <select id="listByUser" resultType="com.xiaoying.task.domain.Task">
+        <include refid="taskView"/>
+        WHERE t.user_id = #{userId}
+        <if test="templateId != null">AND t.template_id = #{templateId}</if>
+        ORDER BY t.created_at DESC, t.id DESC
+    </select>
+
+    <!-- Q9：ids 为空时不生成非法的 IN () -->
+    <select id="listByIdsAndUser" resultType="com.xiaoying.task.domain.Task">
+        <include refid="taskView"/>
+        WHERE t.user_id = #{userId}
+        <choose>
+            <when test="ids == null or ids.isEmpty()">AND 1 = 0</when>
+            <otherwise>
+                AND t.id IN <foreach collection="ids" item="i" open="(" separator="," close=")">#{i}</foreach>
+            </otherwise>
+        </choose>
+        ORDER BY t.created_at DESC, t.id DESC
+    </select>
+
+    <!-- ===== 状态写入：全部为条件更新（database.md §2.5），影响行数 0 = 已是终态 ===== -->
+
+    <update id="markProcessing">
+        UPDATE tasks
+        SET status = 'PROCESSING', stage = #{stage}, started_at = COALESCE(started_at, NOW(3))
+        WHERE id = #{id} AND status IN ('PENDING', 'PROCESSING')
+    </update>
+
+    <update id="markSucceeded">
+        UPDATE tasks
+        SET status = 'SUCCEEDED', result_url = #{resultUrl}, finished_at = NOW(3)
+        WHERE id = #{id} AND status = 'PROCESSING' AND stage = 'RESULT_ORGANIZING'
+    </update>
+
+    <update id="markFailed">
+        UPDATE tasks
+        SET status = 'FAILED', failed_stage = #{stage}, failure_code = #{code}, failure_reason = #{reason},
+            finished_at = NOW(3)
+        WHERE id = #{id} AND status IN ('PENDING', 'PROCESSING')
+    </update>
+
+    <!-- [OQ-26 余项临时默认] 废弃 = FAILED + ACCOUNT_DELETED；前缀走 idx_tasks_user_created -->
+    <update id="abandonActiveByUser">
+        UPDATE tasks
+        SET status = 'FAILED', failed_stage = stage, failure_code = 'ACCOUNT_DELETED',
+            failure_reason = '账户已删除，任务已废弃', finished_at = NOW(3)
+        WHERE user_id = #{userId} AND status IN ('PENDING', 'PROCESSING')
+    </update>
+
+    <!-- [OQ-12] 仅派发被拒绝时补偿；task_assets 通过 fk_task_assets_tasks ON DELETE CASCADE 一并删除 -->
+    <delete id="deleteById">
+        DELETE FROM tasks WHERE id = #{id} AND status = 'PENDING'
+    </delete>
+</mapper>
