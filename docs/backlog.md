@@ -309,6 +309,7 @@ flowchart TD
 - **依赖**：T-043, T-044, T-045
 - **完成定义**：`./mvnw verify` 在开发容器和 CI 中都通过。
 - **相关**：F-15
+- **状态**：实现完成，**待验证**（2026-11-05；CI 尚未运行；implementation-plan 第 8 项 `AccountDeletionFlowIT` 需要 T-012 的 `DELETE /api/account`，T-012 未实现，未编写，不标记 Done）。清单逐项对应：第 1 ~ 3 项 = `TaskPipelineTest`（26，T-042）；第 4 项 = `TaskMapperIT` 终态不可变参数化 12 例（T-040）；第 7 项 = `TaskSubmissionIT`（18）+ `TaskSubmissionHttpIT`（3）（T-041）；第 9 项 = `TaskQueryIT`（18）（T-045）。本任务新增 `TaskFlowIT`（2，真实线程池 + 真实步骤 + Testcontainers MySQL，每阶段 5 s，专用存储目录）：① 提交小文件 < 1 s 返回 202 PENDING，`sim_config` 快照为 5 s 配置；不发任何查询请求，后台线程自行推进到 SUCCEEDED，`pipeline.run` 恰好 1 次，`resultUrl` 与素材 URL 经 MockMvc 打开 200 且 Content-Type 正确（第 6 项，R-04 / F-05）；② 任务处于 PROCESSING / GENERATING 时连续 20 次 `GET /api/tasks/{id}` 与 20 次 `GET /api/tasks?templateId=`，tasks 整行（含 `updated_at`）不变、`markProcessing` / `markSucceeded` / `markFailed` 0 次、`pipeline.run` 0 次额外调用（第 5 项，R-05.2）；继续经查询接口轮询到终态，观察到的 (status, stage) 序列只前进不后退，终态后 5 次查询响应与 DB 行恒定（F-07 验收第 1 条，T-045 留下的待验证项）。backend `./mvnw -B verify`（开发容器）共 151 个单测 + 220 个 IT 通过，`TaskFlowIT` 约 40 s。说明：只新增测试，未改生产代码、契约、Schema 和前端；第 8 项留给 T-012 完成后补充。
 
 ### M4 前端异步状态
 
