@@ -35,4 +35,20 @@ public class SimulationSettings {
     public String snapshotJson() {
         return JSON.writeValueAsString(current.get());
     }
+
+    /**
+     * 读取任务创建时的快照（{@link #snapshotJson()} 的逆操作），供执行器使用 [OQ-10]：执行器只看快照，不看当前全局配置。
+     *
+     * @throws IllegalArgumentException 快照为空或不是合法的配置 JSON
+     */
+    public static SimulationConfig parseSnapshot(String json) {
+        if (json == null || json.isBlank()) {
+            throw new IllegalArgumentException("simulation snapshot is empty");
+        }
+        try {
+            return JSON.readValue(json, SimulationConfig.class);
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("invalid simulation snapshot: " + e.getMessage(), e);
+        }
+    }
 }

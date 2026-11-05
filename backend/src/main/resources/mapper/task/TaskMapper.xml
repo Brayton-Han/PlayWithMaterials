@@ -16,6 +16,12 @@
         VALUES (#{userId}, #{templateId}, 'PENDING', NULL, #{simConfig})
     </insert>
 
+    <!-- 执行器专用（TaskPipeline）：按 PK 读取，不带 user_id；用户请求路径一律用 findByIdAndUser -->
+    <select id="findById" resultType="com.xiaoying.task.domain.Task">
+        <include refid="taskView"/>
+        WHERE t.id = #{id}
+    </select>
+
     <!-- Q6：走 tasks PK -->
     <select id="findByIdAndUser" resultType="com.xiaoying.task.domain.Task">
         <include refid="taskView"/>

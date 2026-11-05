@@ -23,6 +23,12 @@ public interface TaskMapper {
     /** 插入 {@code status='PENDING', stage=NULL}；回填 {@code id}。{@code createdAt} 等由数据库默认值生成。 */
     void insert(Task task);
 
+    /**
+     * 执行器按 ID 读取（tasks PK），<b>不带 {@code userId}</b>：只供后台 {@code TaskPipeline} 使用，
+     * 不得用于任何响应用户请求的路径（那些路径必须用 {@link #findByIdAndUser}）。不存在时返回 null。
+     */
+    Task findById(@Param("id") long id);
+
     /** 单任务（Q6）；不存在或不属于该用户时返回 null。 */
     Task findByIdAndUser(@Param("id") long id, @Param("userId") long userId);
 

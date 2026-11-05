@@ -45,6 +45,12 @@ app:
     fail-stage:
     # 空 = 使用按阶段的默认文案 [OQ-11]
     fail-reason:
+  task:
+    executor:
+      # 任务执行线程池 [OQ-12 临时默认]：核心 = 最大 = pool-size；队列满时拒绝受理（503 QUEUE_FULL，不建任务）。
+      # 环境变量覆盖：APP_TASK_EXECUTOR_POOL_SIZE、APP_TASK_EXECUTOR_QUEUE_CAPACITY
+      pool-size: 2
+      queue-capacity: 100
   auth:
     # 会话固定有效期，不续期 [OQ-28 临时默认 7 天]
     session-ttl: 7d
