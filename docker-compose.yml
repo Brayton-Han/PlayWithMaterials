@@ -1,10 +1,16 @@
-# 演示 / 验收环境（占位）：完整的 mysql + backend + frontend 编排在 T-062 中完成。
-# 目前只包含 MySQL，与 docker-compose.dev.yml 等价，便于后续在此基础上追加服务。
+# 演示 / 验收环境：一条命令构建并启动全部服务（F-17）。
+#
+#   docker compose up --build        # http://localhost:3000
+#
+# 浏览器只访问 frontend；/api/** 与 /files/** 由 Next.js rewrites 转发给 backend（同源，Cookie 正常携带）。
+# 数据保存在 mysql-data、storage-data 两个卷中，`docker compose down` 后再 `up` 数据仍在；
+# `docker compose down -v` 会清空数据。
 name: xiaoying
 
 services:
   mysql:
     image: mysql:8.4
+    restart: unless-stopped
     environment:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-xiaoying}
       MYSQL_USER: ${MYSQL_USER:-xiaoying}
@@ -23,8 +29,42 @@ services:
       timeout: 3s
       retries: 30
 
-  # backend:  T-062
-  # frontend: T-062
+  backend:
+    build:
+      context: ./backend
+      target: runtime
+    image: xiaoying-backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: demo
+      DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-xiaoying}?connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&characterEncoding=UTF-8
+      DB_USERNAME: ${MYSQL_USER:-xiaoying}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-xiaoying}
+      APP_STORAGE_ROOT: /data/storage
+    ports:
+      # 映射到宿主机便于 curl 演示（如 /api/dev/simulation）；浏览器统一走 :3000
+      - "${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - storage-data:/data/storage
+
+  frontend:
+    build:
+      context: ./frontend
+      target: runtime
+      args:
+        # rewrites 目标在构建期写入
+        BACKEND_INTERNAL_URL: http://backend:8080
+    image: xiaoying-frontend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
 
 volumes:
   mysql-data:
+  storage-data:

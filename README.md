@@ -21,11 +21,11 @@
 
 ```
 .
-├── backend/                 Spring Boot 4 + MyBatis + Flyway（Java 21）
-├── frontend/                Next.js 16 App Router + React 19 + TypeScript + Tailwind
+├── backend/                 Spring Boot 4 + MyBatis + Flyway（Java 21），Dockerfile
+├── frontend/                Next.js 16 App Router + React 19 + TypeScript + Tailwind，Dockerfile
 ├── docs/                    需求、设计与契约
-├── docker-compose.dev.yml   本地开发：只启动 MySQL
-├── docker-compose.yml       演示环境（占位，T-062 完成）
+├── docker-compose.dev.yml   本地开发：mysql + backend + frontend（源码挂载）
+├── docker-compose.yml       演示 / 验收：mysql + backend + frontend（构建镜像）
 └── .env.example             环境变量示例
 ```
 
@@ -33,43 +33,65 @@
 
 | 层 | 选型 |
 | --- | --- |
-| 运行时 | Java 21、Node.js 24 |
+| 运行时 | Java 21（eclipse-temurin）、Node.js 24（node:24-alpine） |
 | 后端 | Spring Boot 4.0.9、mybatis-spring-boot-starter 4.0.1、Flyway、Bean Validation、Actuator |
 | 数据库 | MySQL 8.4（`utf8mb4_0900_ai_ci`，时间存 UTC） |
 | 前端 | Next.js 16.4、React 19、TypeScript（strict）、Tailwind CSS 4 |
 | 测试 | JUnit 5、Spring Boot Test、Testcontainers；Vitest、React Testing Library、MSW |
-| 构建 | Maven Wrapper（Maven 3.9.11）、npm |
+| 构建 / 运行 | Docker Compose；Maven Wrapper（Maven 3.9.11）、npm |
+
+## 快速开始（演示环境）
+
+前置条件：只需要 Docker（Docker Desktop 或 Docker Engine + Compose v2）。
+
+```bash
+cp .env.example .env          # 可选，按需修改端口 / 密码
+docker compose up --build     # 打开 http://localhost:3000
+```
+
+- 首次启动时后端通过 Flyway 自动建表并写入种子数据；`docker compose down` 后再 `up`，数据仍在（`mysql-data`、`storage-data` 卷）。
+- `docker compose down -v` 会删除数据卷，下次启动重新初始化。
+- 后端 `http://localhost:8080` 也映射到宿主机，方便 curl 调试；浏览器统一访问 `:3000`。
 
 ## 本地开发
 
-前置条件：JDK 21、Node.js 24、Docker。
+**所有服务都在 Docker 中运行**，宿主机不需要安装 JDK、Maven 或 Node.js。
 
 ```bash
-# 1. 启动 MySQL（宿主机端口 3307，避免与本机 MySQL 冲突；可用 MYSQL_PORT 修改）
-docker compose -f docker-compose.dev.yml up -d mysql
-
-# 2. 启动后端（dev profile，首次启动 Flyway 自动建表并写入种子数据）
-cd backend && ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
-curl http://localhost:8080/actuator/health        # {"status":"UP"}
-
-# 3. 启动前端（/api/**、/files/** 经 rewrites 转发到 http://localhost:8080）
-cd frontend && npm install && npm run dev        # http://localhost:3000
+docker compose -f docker-compose.dev.yml up --build     # http://localhost:3000
 ```
 
-连接参数可通过环境变量覆盖，见 [.env.example](.env.example)。
+| 服务 | 地址 | 代码修改后 |
+| --- | --- | --- |
+| frontend（`next dev`） | http://localhost:3000 | 自动热更新 |
+| backend（`spring-boot:run`，dev profile） | http://localhost:8080 | `docker compose -f docker-compose.dev.yml restart backend` |
+| mysql | 宿主机 `localhost:3307`（`MYSQL_PORT`） | — |
 
 ### 常用命令
 
 ```bash
-# 后端：单元测试 + 集成测试（*IT 使用 Testcontainers，需要 Docker）
-cd backend && ./mvnw -B verify
+DEV="docker compose -f docker-compose.dev.yml"
 
-# 前端
-cd frontend && npm run lint && npm run typecheck && npm test && npm run build
+# 后端：单元测试 + 集成测试（*IT 用 Testcontainers，经宿主机 docker.sock 启动 MySQL）
+$DEV run --rm --no-deps backend ./mvnw -B verify
+
+# 前端：lint、类型检查、测试、构建
+$DEV exec frontend sh -c "npm run lint && npm run typecheck && npm test && npm run build"
 
 # docs/api.yaml 变更后重新生成前端类型（CI 会检查是否已提交）
-cd frontend && npm run gen:api
+$DEV exec frontend npm run gen:api
+
+# 修改 package.json 后：重建镜像并刷新容器内的 node_modules 卷
+$DEV up -d --build --renew-anon-volumes frontend
+$DEV exec frontend npm install <pkg>      # 或在容器内安装，package*.json 会写回宿主机
+
+# 查看日志 / 停止
+$DEV logs -f backend
+$DEV down                                # 加 -v 清空开发数据库
 ```
+
+> 说明：`node_modules`、`.next`、`backend/target`、Maven 仓库都放在容器卷中，与宿主机隔离。
+> 如需让编辑器获得类型提示，可在宿主机执行一次 `cd frontend && npm install`（可选，不影响容器）。
 
 ## 演示账户
 
@@ -80,6 +102,10 @@ cd frontend && npm run gen:api
 | `demo1` | `xiaoying123` |
 | `demo2` | `xiaoying123` |
 
-## Docker Compose 演示
+## CI
 
-`docker compose up --build` 一键启动全部服务将在 T-062 中完成。
+GitHub Actions（[.github/workflows/ci.yml](.github/workflows/ci.yml)）在每次 push / pull request 时运行：
+
+- **frontend**：`npm ci` → API 类型同步检查 → lint → typecheck → test → build
+- **backend**：`./mvnw -B verify`（含 Testcontainers 集成测试）
+- **docker**：`docker compose up --build --wait`，确认三个服务 healthy、经 `:3000` 访问后端为 UP

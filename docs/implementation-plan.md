@@ -19,17 +19,22 @@
 
 ### 0.1 常用验证命令
 
+所有服务（mysql、backend、frontend）都在 Docker 中运行，宿主机只需要 Docker（architecture §1.3）。
+
 ```bash
-# 后端（需要 Docker，用于 Testcontainers）
-cd backend && mvn -B verify
+# 本地开发环境（源码挂载，前端热更新；后端改代码后 restart backend）
+docker compose -f docker-compose.dev.yml up --build   # http://localhost:3000
+DEV="docker compose -f docker-compose.dev.yml"
 
-# 前端
-cd frontend && npm ci && npm run lint && npm run typecheck && npm test && npm run build
+# 后端测试（单测 + Testcontainers IT，容器经宿主机 docker.sock 启动 MySQL）
+$DEV run --rm --no-deps backend ./mvnw -B verify
 
-# 本地开发环境
-docker compose -f docker-compose.dev.yml up -d mysql
-cd backend && mvn spring-boot:run -Dspring-boot.run.profiles=dev
-cd frontend && npm run dev            # http://localhost:3000
+# 前端检查
+$DEV exec frontend sh -c "npm run lint && npm run typecheck && npm test && npm run build"
+$DEV exec frontend npm run gen:api    # api.yaml 变更后重新生成类型
+
+# 依赖变更（package.json / pom.xml）后重建 dev 镜像与依赖卷
+$DEV up -d --build --renew-anon-volumes frontend
 
 # 演示 / 验收环境
 docker compose up --build             # http://localhost:3000
@@ -164,9 +169,9 @@ S2 之所以把后端异步核心整体前置：它是 PRD 的首要考察点，
 | T-001 | `frontend/`、`backend/`、`docs/`、根目录 `docker-compose.yml`（占位）、`docker-compose.dev.yml`、`.gitignore`、`.editorconfig`、`.env.example`、README 骨架 | — | `git status` 没有 `node_modules`、`target`、`.next`、`data/` |
 | T-002 | Spring Boot 工程（版本按 architecture §2 验证后锁定）；`common.error`：`ErrorCode`、`ApiException`、`ErrorResponse`、`GlobalExceptionHandler`（含 `MaxUploadSizeExceededException → 413`、`NoResourceFoundException → 404 NOT_FOUND`、`MethodArgumentNotValidException → 400 VALIDATION_FAILED`、`HttpRequestMethodNotSupportedException → 405`、兜底 500）；Actuator 只暴露 health；JVM / JDBC 时区 UTC；`dev`/`test`/`demo`/`prod` profile | `GlobalExceptionHandlerTest`（MockMvc）：每类异常的 HTTP 状态和 `{code,message}` 结构与 api.yaml 一致；500 响应不含堆栈 | `curl $API/actuator/health` → `{"status":"UP"}` |
 | T-003 | Next.js + TS strict + ESLint + Tailwind；`next.config` rewrites `/api/:path*`、`/files/:path*` → `BACKEND_INTERNAL_URL`；**不创建 middleware / proxy.ts**；`lib/api/client.ts`（`ApiError{kind,status,code,message,details}`、AbortSignal）；`npm run gen:api`（openapi-typescript → `lib/api/schema.d.ts`）；Vitest + RTL + MSW 初始化 | `client.test.ts`：网络错误 → `kind:'network'`；4xx/5xx JSON → `kind:'http'` 带 `code`；非 JSON 的 5xx 也能转成 `ApiError`；abort 不被当成错误上报 | `npm run dev` 后页面显示后端健康状态；四个脚本全部通过 |
-| T-005 | `docker-compose.dev.yml`（mysql:8.4、数据卷、`utf8mb4_0900_ai_ci`） | — | `docker compose -f docker-compose.dev.yml up -d` 后后端 dev profile 能连上 |
+| T-005 | `docker-compose.dev.yml`：mysql:8.4（数据卷、`utf8mb4_0900_ai_ci`）+ backend / frontend 开发容器（`Dockerfile` 的 `dev` 目标、源码挂载）；`backend/Dockerfile`、`frontend/Dockerfile`（多阶段：dev / build / runtime） | — | `docker compose -f docker-compose.dev.yml up --build` 后 `:3000` 页面显示后端 UP；修改前端代码即时生效；容器内 `./mvnw -B verify` 通过 |
 | T-004 | `db/migration/V1__init_schema.sql`（database.md §2 全部表、约束、索引，不含 `task_step_logs`）、`V2__seed_data.sql`（database.md §5） | `MigrationIT`（Testcontainers）：迁移成功；`information_schema` 中存在 database.md 列出的每个唯一索引和 CHECK；插入 `status='SUCCEEDED' AND result_url IS NULL` 被 CHECK 拒绝；插入大小写不同的重复用户名被拒绝；`active_email` 在 `deleted_at` 非空时为 NULL | 空库启动后 `SELECT COUNT(*) FROM templates` ≥ 3；重启后种子不重复 |
-| T-006 | `.github/workflows/ci.yml`：`push` / `pull_request`；frontend job（`npm ci` → lint → typecheck → test → build）；backend job（JDK 21 → `mvn -B verify`，Ubuntu runner 自带 Docker 供 Testcontainers 使用） | CI 本身 | 推一个故意的类型错误分支，frontend job 失败 |
+| T-006 | `.github/workflows/ci.yml`：`push` / `pull_request`；frontend job（`npm ci` → lint → typecheck → test → build）；backend job（JDK 21 → `./mvnw -B verify`，Ubuntu runner 自带 Docker 供 Testcontainers 使用）；docker job（`docker compose up --build --wait` 冒烟：三个服务 healthy、经 `:3000` 访问 health 为 UP） | CI 本身 | 推一个故意的类型错误分支，frontend job 失败 |
 
 ### M1 账户与模板
 
@@ -244,7 +249,7 @@ S2 之所以把后端异步核心整体前置：它是 PRD 的首要考察点，
 | 任务 | 按本架构的产出 | 自动验证 | 手动验证 |
 | --- | --- | --- | --- |
 | T-060 | CI 加入 Maven / npm 缓存；backend job 运行全部 IT（Testcontainers）；可选增加 `npm run gen:api && git diff --exit-code` 检查契约与生成类型一致 | CI 本身 | 推一个故意失败的测试，对应 job 失败 |
-| T-062 | `backend/Dockerfile`（Maven 构建 → JRE 21，非 root 用户）、`frontend/Dockerfile`（standalone，构建参数 `BACKEND_INTERNAL_URL`）、`docker-compose.yml`（architecture §1.2：健康检查、`depends_on: condition: service_healthy`、`mysql-data`、`storage-data` 两个卷、`SPRING_PROFILES_ACTIVE=demo`）、`.env.example` | — | 见下方"验收演示脚本"全部步骤；`docker compose down && docker compose up` 后历史和图片仍在；经 `:3000` 上传一个约 15 MB（3 × 5 MB）的请求成功，确认 rewrites 不截断请求体 |
+| T-062 | Dockerfile 与 `docker-compose.yml`（architecture §1.2：健康检查、`depends_on: condition: service_healthy`、`mysql-data`、`storage-data` 两个卷、`SPRING_PROFILES_ACTIVE=demo`）已在 S0 提前完成；本任务只做功能闭环后的验收与调整（如上传文件写入数据卷、`IMAGE_TAG` 回滚说明） | — | 见下方"验收演示脚本"全部步骤；`docker compose down && docker compose up` 后历史和图片仍在；经 `:3000` 上传一个约 15 MB（3 × 5 MB）的请求成功，确认 rewrites 不截断请求体 |
 | T-061 | README（requirements F-16 清单逐项） | — | 另一个人只看 README 完成验收演示脚本 |
 
 **验收演示脚本**（T-062 / T-061 共用，也是 README 演示章节的底稿）：

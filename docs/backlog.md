@@ -125,10 +125,10 @@ flowchart TD
 - **完成定义**：空库启动后自动建表并写入种子；重复启动不重复插入；演示账户可登录（T-010 完成后验证）。
 - **相关**：F-13, requirements §4
 
-#### T-005 本地开发 MySQL · S · P0
-- **范围**：开发用 `docker-compose.dev.yml`（只含 MySQL + 数据卷）及连接配置示例。
+#### T-005 本地开发环境（全部容器化） · S · P0
+- **范围**：开发用 `docker-compose.dev.yml`：MySQL + 数据卷，以及 backend / frontend 开发容器（源码挂载、前端热更新）；`backend/Dockerfile`、`frontend/Dockerfile`（多阶段，含 `dev` 与 `runtime` 目标）；连接配置示例。宿主机只需要 Docker。
 - **依赖**：T-001
-- **完成定义**：一条命令拉起 MySQL，后端 dev profile 可以连上。
+- **完成定义**：一条命令拉起全部服务，后端 dev profile 连上 MySQL，前端经 rewrites 访问后端；测试可在容器内执行。
 
 #### T-006 CI 骨架 · S · P0
 - **范围**：`.github/workflows/ci.yml`，push / pull_request 触发；frontend job：安装（锁文件）→ lint → typecheck → test → build；backend job：安装 JDK → `mvn -B verify`。
@@ -359,6 +359,7 @@ flowchart TD
 #### T-062 Docker Compose 交付 · M · P1（建议纳入 MVP）
 - **范围**：`frontend/Dockerfile`、`backend/Dockerfile`（多阶段构建）；`docker-compose.yml`：mysql（健康检查、初始化）、backend（depends_on healthy、上传文件数据卷、`SPRING_PROFILES_ACTIVE=demo` 以启用模拟开发接口）、frontend；`.env.example`（没有真实凭据）；反向代理或同源配置，确保会话 Cookie 在容器环境下能正常携带。
 - **依赖**：T-055, T-013（功能闭环完成后）
+- **说明**：Dockerfile 与 `docker-compose.yml` 已随 S0（T-005）提前完成并在 CI 中冒烟；本任务负责功能闭环后的完整验收。
 - **完成定义**：在干净机器上执行 `docker compose up --build`，能用演示账户完成成功、失败、多任务、刷新恢复、我的记录、修改密码、删除账户的演示；`down` 再 `up` 后数据仍在。
 - **相关**：F-17
 
