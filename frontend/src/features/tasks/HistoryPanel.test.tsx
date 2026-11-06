@@ -6,6 +6,7 @@ import { bumpSessionEpoch, getSessionEpoch, resetUserScopedState } from "@/featu
 import type { Task } from "@/lib/api/endpoints/tasks";
 import { makeTask } from "@/test/fixtures";
 import { server } from "@/test/msw/server";
+import { mockTaskHistory } from "@/test/msw/tasks";
 
 import { HistoryPanel } from "./HistoryPanel";
 import { taskStore } from "./taskStore";
@@ -78,6 +79,8 @@ beforeEach(() => {
   vi.setSystemTime(new Date(T0));
   resetUserScopedState();
   bumpSessionEpoch();
+  // 历史加载（T-054）默认返回空列表；需要历史数据的用例自行覆盖
+  mockTaskHistory();
 });
 
 afterEach(() => {
@@ -99,15 +102,17 @@ describe("HistoryPanel", () => {
     const calls = mockGetTask(() => "500");
     seed(processing("2", "tpl-b"));
     render(<HistoryPanel templateId="tpl-a" />);
+    await flush();
 
     expect(screen.getByText("还没有制作记录")).toBeInTheDocument();
     await advance(TRACK_INTERVAL_MS * 3);
     expect(calls).toEqual([]);
   });
 
-  it("新写入 store 的当前模板任务立即出现", () => {
+  it("新写入 store 的当前模板任务立即出现", async () => {
     mockGetTask(() => "500");
     render(<HistoryPanel templateId="tpl-a" />);
+    await flush();
     expect(screen.getByText("还没有制作记录")).toBeInTheDocument();
 
     seed(makeTask({ taskId: "7", templateId: "tpl-a" }));
@@ -181,10 +186,11 @@ describe("HistoryPanel", () => {
     expect(calls).toEqual([]);
   });
 
-  it("切换会话后清空前一用户的卡片", () => {
+  it("切换会话后清空前一用户的卡片", async () => {
     mockGetTask(() => "500");
     seed(succeeded("1"));
     render(<HistoryPanel templateId="tpl-a" />);
+    await flush();
     expect(card("1")).toBeInTheDocument();
 
     act(() => {
@@ -194,5 +200,145 @@ describe("HistoryPanel", () => {
 
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
     expect(screen.getByText("还没有制作记录")).toBeInTheDocument();
+  });
+});
+
+describe("HistoryPanel 历史加载（T-054）", () => {
+  /** 手动控制的历史响应：返回 Promise 与 resolve 函数。 */
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  it("挂载时按 templateId 请求一次历史：加载中 → 卡片（倒序），不显示为空", async () => {
+    mockGetTask(() => "500");
+    const gate = deferred<Task[]>();
+    const calls = mockTaskHistory(() => gate.promise);
+    render(<HistoryPanel templateId="tpl-a" />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("正在加载制作记录…");
+    expect(screen.queryByText("还没有制作记录")).not.toBeInTheDocument();
+
+    gate.resolve([succeeded("3"), succeeded("1")]);
+    await flush();
+
+    expect(calls).toEqual(["tpl-a"]);
+    expect(screen.queryByText("正在加载制作记录…")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("article").map((a) => a.getAttribute("aria-label"))).toEqual(["任务 #3", "任务 #1"]);
+    expect(card("3")).toHaveTextContent("制作完成");
+  });
+
+  it("历史为空时显示空状态", async () => {
+    mockGetTask(() => "500");
+    mockTaskHistory(() => []);
+    render(<HistoryPanel templateId="tpl-a" />);
+    await flush();
+    expect(screen.getByText("还没有制作记录")).toBeInTheDocument();
+  });
+
+  it("历史中未结束的任务自动进入跟踪并推进到终态，终态任务不查询", async () => {
+    const calls = mockGetTask((id, call) => (call === 0 ? processing(id, "tpl-a", 3, "RESULT_ORGANIZING") : succeeded(id, "tpl-a", 6)));
+    mockTaskHistory(() => [processing("2", "tpl-a", 1, "ASSET_CHECK"), succeeded("1")]);
+    render(<HistoryPanel templateId="tpl-a" />);
+    await flush();
+    expect(card("2")).toHaveTextContent("处理中 · 素材检查中");
+
+    await advance(TRACK_INTERVAL_MS);
+    expect(card("2")).toHaveTextContent("处理中 · 结果整理中");
+    await advance(TRACK_INTERVAL_MS);
+    expect(card("2")).toHaveTextContent("制作完成");
+
+    await advance(TRACK_INTERVAL_MS * 3);
+    expect(calls).toEqual(["2", "2"]);
+  });
+
+  it.each(["500", "network"] as const)("历史加载失败（%s）：错误 + 重试，不显示空状态；重试成功后显示卡片", async (failure) => {
+    mockGetTask(() => "500");
+    const calls = mockTaskHistory((_, call) => (call === 0 ? failure : [succeeded("1")]));
+    render(<HistoryPanel templateId="tpl-a" />);
+    await flush();
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("制作记录加载失败");
+    expect(alert).toHaveTextContent(failure === "500" ? "服务器内部错误" : "网络连接异常");
+    expect(screen.queryByText("还没有制作记录")).not.toBeInTheDocument();
+
+    fireEvent.click(within(alert).getByRole("button", { name: "重试" }));
+    await flush();
+
+    expect(calls).toEqual(["tpl-a", "tpl-a"]);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(card("1")).toHaveTextContent("制作完成");
+  });
+
+  it("历史加载失败时，store 中已有的卡片（如刚提交的任务）仍然显示", async () => {
+    mockGetTask(() => "500");
+    mockTaskHistory(() => "500");
+    seed(makeTask({ taskId: "9", templateId: "tpl-a" }));
+    render(<HistoryPanel templateId="tpl-a" />);
+    await flush();
+
+    expect(screen.getByRole("alert")).toHaveTextContent("制作记录加载失败");
+    expect(card("9")).toHaveTextContent("等待处理");
+  });
+
+  it("较旧的历史快照不会覆盖 store 中更新的状态", async () => {
+    mockGetTask(() => "500");
+    mockTaskHistory(() => [processing("1", "tpl-a", 1)]);
+    seed(succeeded("1", "tpl-a", 5));
+    render(<HistoryPanel templateId="tpl-a" />);
+    await flush();
+
+    expect(card("1")).toHaveTextContent("制作完成");
+    expect(taskStore.getState().entries["1"]?.task.status).toBe("SUCCEEDED");
+  });
+
+  it("请求期间切换会话：迟到的历史响应不写入 store", async () => {
+    mockGetTask(() => "500");
+    const gate = deferred<Task[]>();
+    mockTaskHistory(() => gate.promise);
+    render(<HistoryPanel templateId="tpl-a" />);
+    await flush();
+
+    act(() => {
+      resetUserScopedState();
+      bumpSessionEpoch();
+    });
+    gate.resolve([succeeded("1")]);
+    await flush();
+
+    expect(taskStore.getState().entries).toEqual({});
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+  });
+
+  it("卸载后迟到的历史响应不写入 store", async () => {
+    mockGetTask(() => "500");
+    const gate = deferred<Task[]>();
+    mockTaskHistory(() => gate.promise);
+    const view = render(<HistoryPanel templateId="tpl-a" />);
+    await flush();
+
+    view.unmount();
+    gate.resolve([succeeded("1")]);
+    await flush();
+
+    expect(taskStore.getState().entries).toEqual({});
+  });
+
+  it("刷新按钮重新加载历史：出现其他页面提交的新任务", async () => {
+    mockGetTask(() => "500");
+    const calls = mockTaskHistory((_, call) => (call === 0 ? [succeeded("1")] : [succeeded("2"), succeeded("1")]));
+    render(<HistoryPanel templateId="tpl-a" />);
+    await flush();
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新任务状态" }));
+    await flush();
+
+    expect(calls).toEqual(["tpl-a", "tpl-a"]);
+    expect(screen.getAllByRole("article").map((a) => a.getAttribute("aria-label"))).toEqual(["任务 #2", "任务 #1"]);
   });
 });

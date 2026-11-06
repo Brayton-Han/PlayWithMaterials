@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,6 +10,7 @@ import type { TemplateDetail } from "@/lib/api/endpoints/catalog";
 import { installFakeXhr, lastXhr } from "@/test/fakeXhr";
 import { makeTask, makeUser } from "@/test/fixtures";
 import { server } from "@/test/msw/server";
+import { mockTaskHistory } from "@/test/msw/tasks";
 
 import { rememberListCategory } from "./listReturn";
 import { TemplateDetailPage } from "./TemplateDetailPage";
@@ -57,6 +58,7 @@ function useCatalog(templates: TemplateDetail[]) {
 
 function renderPage(templateId: string, me: () => Response = anonymous) {
   server.use(http.get("/api/auth/me", me));
+  mockTaskHistory();
   return render(
     <AuthProvider>
       <TemplateDetailPage templateId={templateId} />
@@ -157,6 +159,9 @@ describe("TemplateDetailPage", () => {
     expect(first).toHaveAttribute("accept", "image/png");
     // 监听器确实记录到了页面加载时的请求
     expect(requests).toContain("GET /api/templates/demo-postcard");
+    // 等 History 的历史加载（T-054）结束，之后的选图操作不应再发请求
+    await waitFor(() => expect(requests).toContain("GET /api/tasks"));
+    await waitFor(() => expect(screen.queryByText("正在加载制作记录…")).not.toBeInTheDocument());
     const before = requests.length;
 
     await user.upload(first, new File(["png"], "a.png", { type: "image/png" }));
@@ -200,6 +205,7 @@ describe("TemplateDetailPage", () => {
       URL.createObjectURL = vi.fn(() => "blob:http://localhost:3000/preview");
       URL.revokeObjectURL = vi.fn();
       useCatalog([POSTCARD]);
+      mockTaskHistory();
     });
     afterEach(() => vi.unstubAllGlobals());
 

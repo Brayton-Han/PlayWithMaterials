@@ -3,7 +3,7 @@
  * 详情页提交受理（202）后立即把任务写入 taskStore → History 出现 PENDING 卡片并自动跟踪；
  * 提交按钮退出"提交中"，上传区清空；提交失败不插入任务。
  */
-import { act, render, screen, within } from "@testing-library/react";
+import { act, cleanup as cleanupRender, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,7 @@ import type { Task } from "@/lib/api/endpoints/tasks";
 import { FakeXhr, installFakeXhr, lastXhr } from "@/test/fakeXhr";
 import { makeTask, makeUser } from "@/test/fixtures";
 import { server } from "@/test/msw/server";
+import { mockTaskHistory } from "@/test/msw/tasks";
 
 import { TemplateDetailPage } from "./TemplateDetailPage";
 
@@ -41,8 +42,12 @@ const pending = (taskId: string, createdAt = "2026-11-05T08:00:00.000Z") =>
 /** GET /api/tasks/:taskId 的调用记录；默认回 500，避免意外的真实推进。 */
 let taskQueries: string[] = [];
 let replyTask: (taskId: string) => Task | null = () => null;
+/** GET /api/tasks?templateId= 的响应（T-054 历史加载）；默认空列表。 */
+let replyHistory: () => Task[] = () => [];
+let historyCalls: (string | null)[] = [];
 
 function renderPage() {
+  historyCalls = mockTaskHistory(() => replyHistory());
   server.use(
     http.get("/api/auth/me", () => HttpResponse.json(makeUser("demo1"))),
     http.get("/api/templates/:templateId", () => HttpResponse.json(POSTCARD)),
@@ -93,6 +98,7 @@ beforeEach(() => {
   installFakeXhr();
   taskQueries = [];
   replyTask = () => null;
+  replyHistory = () => [];
   user = userEvent.setup({ applyAccept: false });
   let seq = 0;
   URL.createObjectURL = vi.fn(() => `blob:http://localhost:3000/${++seq}`);
@@ -221,3 +227,86 @@ describe("提交与任务区衔接（T-053）", () => {
     expect(card("42")).toHaveAttribute("data-state", "processing");
   });
 });
+
+describe("刷新恢复与历史加载（T-054）", () => {
+  /** 模拟浏览器刷新 / 重新打开：卸载页面并丢弃模块内存（taskStore），再重新渲染。 */
+  function reloadPage() {
+    cleanupRender();
+    act(() => {
+      resetUserScopedState();
+    });
+    expect(storedIds()).toEqual([]);
+    renderPage();
+  }
+
+  it("提交后刷新：任务从后端恢复，并继续自动更新至终态", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"], shouldAdvanceTime: true });
+    const processingTask = makeTask({
+      taskId: "42",
+      templateId: "demo-postcard",
+      status: "PROCESSING",
+      stage: "GENERATING",
+      startedAt: "2026-11-05T08:00:01.000Z",
+      updatedAt: "2026-11-05T08:00:02.000Z",
+    });
+    const done = makeTask({
+      ...processingTask,
+      status: "SUCCEEDED",
+      stage: "RESULT_ORGANIZING",
+      resultUrl: "/files/results/42/r.png",
+      finishedAt: "2026-11-05T08:00:06.000Z",
+      updatedAt: "2026-11-05T08:00:06.000Z",
+    });
+    renderPage();
+    const xhr = await selectAndSubmit();
+    await xhr.respond(202, pending("42"));
+    expect(card("42")).toHaveTextContent("等待处理");
+
+    replyHistory = () => [processingTask];
+    replyTask = () => done;
+    reloadPage();
+
+    // 刷新后：历史按 templateId 加载，卡片恢复为后端的最新状态
+    await vi.waitFor(() => expect(card("42")).toHaveTextContent("处理中 · 生成中"));
+    expect(historyCalls).toEqual(["demo-postcard"]);
+
+    // 未结束任务自动进入跟踪
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TRACK_INTERVAL_MS);
+    });
+    await vi.waitFor(() => expect(card("42")).toHaveTextContent("制作完成"));
+    expect(taskQueries).toEqual(["42"]);
+  });
+
+  it("关闭后重新打开：已完成 / 失败的任务直接显示结果或失败原因，且不再查询", async () => {
+    replyHistory = () => [
+      makeTask({
+        taskId: "8",
+        templateId: "demo-postcard",
+        status: "FAILED",
+        stage: "GENERATING",
+        failedStage: "GENERATING",
+        failureCode: "SIMULATED_FAILURE",
+        failureReason: "模拟失败：生成阶段出错",
+        createdAt: "2026-11-05T08:01:00.000Z",
+        updatedAt: "2026-11-05T08:01:05.000Z",
+      }),
+      makeTask({
+        taskId: "7",
+        templateId: "demo-postcard",
+        status: "SUCCEEDED",
+        stage: "RESULT_ORGANIZING",
+        resultUrl: "/files/results/7/r.png",
+        updatedAt: "2026-11-05T08:00:06.000Z",
+      }),
+    ];
+    renderPage();
+
+    await vi.waitFor(() => expect(cardIds()).toEqual(["任务 #8", "任务 #7"]));
+    expect(card("8")).toHaveTextContent("生成阶段 · 模拟失败：生成阶段出错");
+    expect(card("7")).toHaveTextContent("制作完成");
+    expect(within(card("7")).getByRole("button", { name: /预览/ })).toBeInTheDocument();
+    expect(taskQueries).toEqual([]);
+  });
+});
+
