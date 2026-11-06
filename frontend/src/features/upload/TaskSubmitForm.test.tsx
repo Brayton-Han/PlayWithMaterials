@@ -2,7 +2,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
-import { bumpSessionEpoch } from "@/features/auth/session";
+import { bumpSessionEpoch, getSessionEpoch } from "@/features/auth/session";
 import { abortAllRequests, ApiError, setUnauthorizedHandler } from "@/lib/api/client";
 import type { Task } from "@/lib/api/endpoints/tasks";
 import { makeTask } from "@/test/fixtures";
@@ -29,10 +29,10 @@ const submitButton = () => within(screen.getByRole("form", { name: "提交制作
 const slotItem = (n: number) => screen.getAllByRole("listitem")[n - 1];
 
 let user: ReturnType<typeof userEvent.setup>;
-let onAccepted: Mock<(task: Task) => void>;
+let onAccepted: Mock<(task: Task, epoch: number) => void>;
 
 function renderForm() {
-  onAccepted = vi.fn<(task: Task) => void>();
+  onAccepted = vi.fn<(task: Task, epoch: number) => void>();
   return render(<TaskSubmitForm template={TEMPLATE} onAccepted={onAccepted} />);
 }
 
@@ -119,13 +119,15 @@ describe("TaskSubmitForm", () => {
     await xhr.respond(202, task);
 
     expect(onAccepted).toHaveBeenCalledTimes(1);
-    expect(onAccepted).toHaveBeenCalledWith(task);
+    expect(onAccepted).toHaveBeenCalledWith(task, getSessionEpoch());
     expect(submitButton()).toHaveTextContent("提交制作");
-    expect(submitButton()).toBeEnabled();
     expect(screen.getByText("提交成功，任务 #42 已受理，正在后台制作")).toBeInTheDocument();
+    // OQ-07 临时默认：受理后清空上传位，按钮因未选图而禁用（不是"提交中"）
+    expect(submitButton()).toBeDisabled();
+    expect(submitButton()).toHaveAccessibleDescription("请选择第 1、2 张图片");
   });
 
-  it("locks the slots while uploading and submitting, and unlocks afterwards", async () => {
+  it("locks the slots while uploading and submitting, then clears and unlocks them on 202 (OQ-07)", async () => {
     renderForm();
     await selectBoth();
     await user.click(submitButton());
@@ -142,7 +144,16 @@ describe("TaskSubmitForm", () => {
 
     await lastXhr().respond(202, makeTask({ taskId: "1" }));
     expect(input(1)).toBeEnabled();
-    expect(removeButton(2)).toBeEnabled();
+    expect(input(2)).toBeEnabled();
+    expect(screen.queryByRole("img", { name: /张图片预览/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /移除第/ })).not.toBeInTheDocument();
+    // 两张预览的 blob URL 都已释放
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:http://localhost:3000/1");
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:http://localhost:3000/2");
+
+    // 清空后可以直接选图制作下一张
+    await selectBoth();
+    expect(submitButton()).toBeEnabled();
   });
 
   it("keeps the selected files after a network failure and resubmits them without reselecting", async () => {

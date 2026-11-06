@@ -48,8 +48,11 @@ export function submitErrorMessage(error: ApiError): string {
 }
 
 export interface SubmitHandlers {
-  /** 202 受理：返回的任务（PENDING）。写入 taskStore 由 T-053 接入。 */
-  onAccepted?: (task: Task) => void;
+  /**
+   * 202 受理：返回的任务（PENDING）与请求发起时的 session epoch（写入 taskStore 时用于丢弃跨会话的结果）。
+   * 只在 epoch 仍是当前值、请求未被取消时调用，调用前提交状态已回到 idle。
+   */
+  onAccepted?: (task: Task, epoch: number) => void;
   /** 400 带 slotIndex 的错误，交给 useSlots.applyServerErrors 标到对应上传位。 */
   onFieldErrors?: (errors: FieldError[]) => void;
 }
@@ -105,7 +108,7 @@ export function useSubmitTask(templateId: string): UseSubmitTaskResult {
           release();
           if (!live()) return;
           setState(IDLE);
-          handlers.onAccepted?.(task);
+          handlers.onAccepted?.(task, epoch);
         },
         (error: unknown) => {
           release();

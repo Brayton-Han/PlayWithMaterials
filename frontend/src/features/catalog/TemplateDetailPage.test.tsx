@@ -1,13 +1,16 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AuthProvider, useAuth } from "@/features/auth/AuthProvider";
+import { getSessionEpoch } from "@/features/auth/session";
+import { taskStore } from "@/features/tasks/taskStore";
 import type { TemplateDetail } from "@/lib/api/endpoints/catalog";
 import { installFakeXhr, lastXhr } from "@/test/fakeXhr";
 import { makeTask, makeUser } from "@/test/fixtures";
 import { server } from "@/test/msw/server";
+import { mockTaskHistory } from "@/test/msw/tasks";
 
 import { rememberListCategory } from "./listReturn";
 import { TemplateDetailPage } from "./TemplateDetailPage";
@@ -55,6 +58,7 @@ function useCatalog(templates: TemplateDetail[]) {
 
 function renderPage(templateId: string, me: () => Response = anonymous) {
   server.use(http.get("/api/auth/me", me));
+  mockTaskHistory();
   return render(
     <AuthProvider>
       <TemplateDetailPage templateId={templateId} />
@@ -112,6 +116,36 @@ describe("TemplateDetailPage", () => {
     expect(screen.getByRole("complementary", { name: "History" })).toBeInTheDocument();
   });
 
+  it("shows only this template's tasks from the task store in History, with an empty state otherwise", async () => {
+    useCatalog([POSTCARD]);
+    renderPage("demo-postcard", loggedIn);
+
+    const history = await screen.findByRole("complementary", { name: "History" });
+    expect(await within(history).findByText("还没有制作记录")).toBeInTheDocument();
+    expect(within(history).getByRole("button", { name: "刷新任务状态" })).toBeInTheDocument();
+
+    // 终态任务不会触发跟踪请求
+    const failedTask = makeTask({
+      taskId: "8",
+      templateId: "demo-postcard",
+      status: "FAILED",
+      stage: "GENERATING",
+      failedStage: "GENERATING",
+      failureCode: "SIMULATED_FAILURE",
+      failureReason: "模拟失败：生成阶段出错",
+    });
+    act(() => {
+      taskStore
+        .getState()
+        .upsertMany([failedTask, { ...failedTask, taskId: "9", templateId: "other" }], getSessionEpoch());
+    });
+
+    const card = within(history).getByRole("article", { name: "任务 #8" });
+    expect(card).toHaveTextContent("制作失败");
+    expect(card).toHaveTextContent("生成阶段 · 模拟失败：生成阶段出错");
+    expect(within(history).queryByRole("article", { name: "任务 #9" })).not.toBeInTheDocument();
+  });
+
   it("lets a logged-in user pick an image into a slot with a local preview and no upload request", async () => {
     URL.createObjectURL = vi.fn(() => "blob:http://localhost:3000/preview");
     URL.revokeObjectURL = vi.fn();
@@ -125,6 +159,9 @@ describe("TemplateDetailPage", () => {
     expect(first).toHaveAttribute("accept", "image/png");
     // 监听器确实记录到了页面加载时的请求
     expect(requests).toContain("GET /api/templates/demo-postcard");
+    // 等 History 的历史加载（T-054）结束，之后的选图操作不应再发请求
+    await waitFor(() => expect(requests).toContain("GET /api/tasks"));
+    await waitFor(() => expect(screen.queryByText("正在加载制作记录…")).not.toBeInTheDocument());
     const before = requests.length;
 
     await user.upload(first, new File(["png"], "a.png", { type: "image/png" }));
@@ -168,6 +205,7 @@ describe("TemplateDetailPage", () => {
       URL.createObjectURL = vi.fn(() => "blob:http://localhost:3000/preview");
       URL.revokeObjectURL = vi.fn();
       useCatalog([POSTCARD]);
+      mockTaskHistory();
     });
     afterEach(() => vi.unstubAllGlobals());
 
@@ -185,7 +223,9 @@ describe("TemplateDetailPage", () => {
 
       await xhr.respond(202, makeTask({ taskId: "42", templateId: "demo-postcard" }));
       expect(screen.getByText("提交成功，任务 #42 已受理，正在后台制作")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "提交制作" })).toBeEnabled();
+      // 上传区已清空（OQ-07），按钮回到"提交制作"、等待重新选图
+      expect(screen.getByRole("button", { name: "提交制作" })).toBeDisabled();
+      expect(screen.queryByRole("img", { name: "第 1 张图片预览" })).not.toBeInTheDocument();
     });
 
     it("aborts an in-flight upload on logout and clears the selection", async () => {

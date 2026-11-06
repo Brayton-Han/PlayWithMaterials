@@ -8,6 +8,9 @@ import { LoginPrompt } from "@/features/auth/LoginPrompt";
 import { useRequireAuth } from "@/features/auth/useRequireAuth";
 import { isApiError } from "@/lib/api/client";
 import { getTemplate, type TemplateDetail } from "@/lib/api/endpoints/catalog";
+import type { Task } from "@/lib/api/endpoints/tasks";
+import { HistoryPanel } from "@/features/tasks/HistoryPanel";
+import { taskStore } from "@/features/tasks/taskStore";
 import { TaskSubmitForm } from "@/features/upload/TaskSubmitForm";
 import { useKeyedLoad } from "@/lib/useKeyedLoad";
 
@@ -24,7 +27,8 @@ function isTemplateNotFound(error: unknown): boolean {
 }
 
 /**
- * 模板详情页（F-02）：返回、标题、封面、描述、素材要求；左栏上传区（T-031 选图，T-032 提交），右栏 History（T-052 填充）。
+ * 模板详情页（F-02）：返回、标题、封面、描述、素材要求；左栏上传区（T-031 选图，T-032 提交），右栏 History（T-052）；
+ * 提交受理的任务写入 taskStore 后出现在 History（T-053）。
  * 未登录时上传区和 History 替换为"登录后即可制作"提示，登录后回到本页（OQ-23 余项 1 临时默认）。
  */
 export function TemplateDetailPage({ templateId }: { templateId: string }) {
@@ -91,7 +95,7 @@ function TemplateDetailLayout({ template, loginNext }: { template: TemplateDetai
           History
         </h2>
         <AuthOnly loginNext={loginNext}>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">当前模板的制作记录将在 T-052 中实现。</p>
+          <HistoryPanel key={template.templateId} templateId={template.templateId} />
         </AuthOnly>
       </aside>
     </div>
@@ -112,10 +116,16 @@ function AuthOnly({ loginNext, children }: { loginNext: string; children: ReactN
 
 /**
  * 上传区：上传位数量 = requiredImageCount（F-02 规则 2），选图、预览、替换、移除在本地完成（T-031）；
- * 提交、上传进度、锁定与失败反馈见 TaskSubmitForm（T-032）。受理后写入任务区由 T-053 接入。
+ * 提交、上传进度、锁定与失败反馈见 TaskSubmitForm（T-032）。
+ * 受理后立即把返回的任务（PENDING）写入 taskStore（T-053，F-09 规则 2）：右栏 History 随即出现新卡片，
+ * 其中的跟踪调度器订阅了 store，会自动开始跟踪该任务。提交失败时不写入。
  */
 function TemplateUploadArea({ template }: { template: TemplateDetail }) {
-  return <TaskSubmitForm template={template} />;
+  return <TaskSubmitForm template={template} onAccepted={upsertAcceptedTask} />;
+}
+
+function upsertAcceptedTask(task: Task, epoch: number) {
+  taskStore.getState().upsertFromServer(task, epoch);
 }
 
 function TemplateCover({ url, title }: { url: string; title: string }) {
