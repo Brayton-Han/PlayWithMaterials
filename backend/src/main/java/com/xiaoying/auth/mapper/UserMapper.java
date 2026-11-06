@@ -21,4 +21,10 @@ public interface UserMapper {
     User findActiveByUsername(@Param("username") String username);
 
     User findActiveById(@Param("id") long id);
+
+    /** 修改密码（F-28）：只更新未删除账户；返回影响行数，0 表示账户已不存在或已删除。 */
+    int updatePassword(@Param("id") long id, @Param("passwordHash") String passwordHash);
+
+    /** 软删除（F-28、OQ-26）：{@code deleted_at IS NULL} 条件保证只删除一次；返回影响行数。 */
+    int softDelete(@Param("id") long id);
 }

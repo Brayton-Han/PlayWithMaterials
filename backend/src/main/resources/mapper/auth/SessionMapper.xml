@@ -19,4 +19,13 @@
     <delete id="deleteByTokenHash">
         DELETE FROM sessions WHERE token_hash = #{tokenHash}
     </delete>
+
+    <!-- 走 idx_sessions_user_id -->
+    <delete id="deleteByUserIdExcept">
+        DELETE FROM sessions WHERE user_id = #{userId} AND token_hash &lt;&gt; #{keepTokenHash}
+    </delete>
+
+    <delete id="deleteByUserId">
+        DELETE FROM sessions WHERE user_id = #{userId}
+    </delete>
 </mapper>
