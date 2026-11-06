@@ -1,15 +1,18 @@
 "use client";
 
-import { useId, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 
 import { TextField } from "@/components/TextField";
 import { formErrorMessage, hasErrors, serverFieldErrors, type FieldErrors } from "@/features/auth/formErrors";
 import { isAbortError, isApiError } from "@/lib/api/client";
 import { changePassword } from "@/lib/api/endpoints/account";
+import { useKeepFocus } from "@/lib/useKeepFocus";
 
 const FIELDS = ["currentPassword", "newPassword", "confirmPassword"] as const;
 type Field = (typeof FIELDS)[number];
 type Values = Record<Field, string>;
+
+const FOCUS_AFTER_SUBMIT = ['button[type="submit"]'];
 
 const EMPTY: Values = { currentPassword: "", newPassword: "", confirmPassword: "" };
 
@@ -34,10 +37,14 @@ export function ChangePasswordForm() {
   const [formError, setFormError] = useState<string | null>(null);
   const [succeeded, setSucceeded] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  // 结束后焦点回到出错字段或提交按钮（提交期间按钮被禁用，浏览器会把焦点丢回 body）
+  const armFocus = useKeepFocus(formRef, submitting, FOCUS_AFTER_SUBMIT);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitting) return;
+    armFocus();
     const errors = validateChangePassword(values);
     setFieldErrors(errors);
     setFormError(null);
@@ -76,7 +83,7 @@ export function ChangePasswordForm() {
       <h2 id={headingId} className="text-lg font-semibold">
         修改密码
       </h2>
-      <form noValidate onSubmit={handleSubmit} className="flex max-w-sm flex-col gap-4" aria-label="修改密码">
+      <form ref={formRef} noValidate onSubmit={handleSubmit} className="flex max-w-sm flex-col gap-4" aria-label="修改密码">
         <TextField
           label="当前密码"
           name="currentPassword"

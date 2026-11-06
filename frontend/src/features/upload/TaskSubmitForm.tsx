@@ -1,13 +1,20 @@
 "use client";
 
-import { useId, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
 
 import type { Task } from "@/lib/api/endpoints/tasks";
 import type { TemplateDetail } from "@/lib/api/endpoints/catalog";
+import { useKeepFocus } from "@/lib/useKeepFocus";
 
 import { UploadSlots } from "./UploadSlots";
 import { useSlots, type Slot } from "./useSlots";
 import { canSubmit, submitErrorMessage, useSubmitTask, type SubmitState } from "./useSubmitTask";
+
+/**
+ * 上传 / 提交结束后焦点去向（F-19）：有问题的上传位 → "重新提交"按钮（失败）→ 第一个上传位
+ * （受理后上传位清空、按钮禁用）。
+ */
+const FOCUS_AFTER_SUBMIT = ['button[type="submit"]', 'input[type="file"]'];
 
 type SubmitTemplate = Pick<TemplateDetail, "templateId" | "requiredImageCount" | "acceptedMimeTypes" | "maxFileSizeBytes">;
 
@@ -32,12 +39,15 @@ export function TaskSubmitForm({ template, onAccepted }: TaskSubmitFormProps) {
   );
   const [accepted, setAccepted] = useState<Task | null>(null);
   const hintId = useId();
+  const formRef = useRef<HTMLFormElement>(null);
+  const armFocus = useKeepFocus(formRef, busy, FOCUS_AFTER_SUBMIT);
   const enabled = canSubmit(allSelected, state);
   const hint = enabled ? null : pendingSlotsHint(slots);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!enabled) return;
+    armFocus();
     setAccepted(null);
     submit(files, {
       onAccepted: (task, epoch) => {
@@ -51,7 +61,7 @@ export function TaskSubmitForm({ template, onAccepted }: TaskSubmitFormProps) {
   }
 
   return (
-    <form onSubmit={handleSubmit} aria-label="提交制作" aria-busy={busy || undefined} className="flex flex-col gap-4" noValidate>
+    <form ref={formRef} onSubmit={handleSubmit} aria-label="提交制作" aria-busy={busy || undefined} className="flex flex-col gap-4" noValidate>
       <UploadSlots slots={slots} rules={template} locked={busy} onSelect={select} onRemove={remove} />
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-3">

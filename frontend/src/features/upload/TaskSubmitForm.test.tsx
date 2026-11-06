@@ -7,6 +7,7 @@ import { abortAllRequests, ApiError, setUnauthorizedHandler } from "@/lib/api/cl
 import type { Task } from "@/lib/api/endpoints/tasks";
 import { makeTask } from "@/test/fixtures";
 import { FakeXhr, installFakeXhr, lastXhr } from "@/test/fakeXhr";
+import { simulateFocusFixup } from "@/test/focus";
 
 import { TaskSubmitForm } from "./TaskSubmitForm";
 import { canSubmit, isSubmitBusy, submitErrorMessage, useSubmitTask, type SubmitState } from "./useSubmitTask";
@@ -208,6 +209,46 @@ describe("TaskSubmitForm", () => {
     expect(submitButton()).toBeEnabled();
     await user.click(submitButton());
     expect(lastXhr().form.files.map((f) => f.name)).toEqual(["a.png", "c.jpg"]);
+  });
+
+  describe("keyboard focus after submitting (F-19)", () => {
+    /** 提交后按钮被禁用：真实浏览器会把焦点丢回 body。 */
+    async function submitAndLoseFocus() {
+      await selectBoth();
+      await user.click(submitButton());
+      expect(submitButton()).toBeDisabled();
+      simulateFocusFixup();
+      expect(document.body).toHaveFocus();
+    }
+
+    it("moves focus to the first (cleared) slot once the task is accepted", async () => {
+      renderForm();
+      await submitAndLoseFocus();
+      await lastXhr().respond(202, makeTask({ taskId: "1" }));
+
+      expect(input(1)).toHaveFocus();
+    });
+
+    it("returns focus to the resubmit button after a network failure", async () => {
+      renderForm();
+      await submitAndLoseFocus();
+      await lastXhr().failNetwork();
+
+      expect(submitButton()).toHaveTextContent("重新提交");
+      expect(submitButton()).toHaveFocus();
+    });
+
+    it("moves focus to the slot the server rejected", async () => {
+      renderForm();
+      await submitAndLoseFocus();
+      await lastXhr().respond(400, {
+        code: "ASSET_VALIDATION_FAILED",
+        message: "部分图片不符合要求",
+        details: { fieldErrors: [{ field: "files", slotIndex: 1, code: "FILE_TYPE_NOT_ACCEPTED", message: "格式不支持" }] },
+      });
+
+      expect(input(2)).toHaveFocus();
+    });
   });
 
   it("shows the server message for 413 and keeps the files", async () => {

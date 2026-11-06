@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { TextField } from "@/components/TextField";
 import { isAbortError, isApiError } from "@/lib/api/client";
+import { useKeepFocus } from "@/lib/useKeepFocus";
 
 import { useAuth } from "./AuthProvider";
 import { formErrorMessage, hasErrors, serverFieldErrors, type FieldErrors } from "./formErrors";
@@ -13,6 +14,7 @@ import { authPageHref, safeNextPath } from "./session";
 
 const FIELDS = ["username", "email", "password", "confirmPassword"] as const;
 type Field = (typeof FIELDS)[number];
+const FOCUS_AFTER_SUBMIT = ['button[type="submit"]'];
 type Values = Record<Field, string>;
 
 const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/; // OQ-29 临时默认
@@ -46,6 +48,9 @@ export function RegisterForm() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors<Field>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  // 失败后焦点回到出错字段或提交按钮（提交期间按钮被禁用，浏览器会把焦点丢回 body）
+  const armFocus = useKeepFocus(formRef, submitting, FOCUS_AFTER_SUBMIT);
 
   useEffect(() => {
     if (status === "authenticated") router.replace(next);
@@ -54,6 +59,7 @@ export function RegisterForm() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitting) return;
+    armFocus();
     const errors = validateRegister(values);
     setFieldErrors(errors);
     setFormError(null);
@@ -91,7 +97,7 @@ export function RegisterForm() {
     setValues((prev) => ({ ...prev, [field]: event.target.value }));
 
   return (
-    <form noValidate onSubmit={handleSubmit} className="flex flex-col gap-4" aria-label="注册">
+    <form ref={formRef} noValidate onSubmit={handleSubmit} className="flex flex-col gap-4" aria-label="注册">
       <TextField
         label="用户名"
         name="username"

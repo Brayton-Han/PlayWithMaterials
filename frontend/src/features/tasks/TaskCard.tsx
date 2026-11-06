@@ -4,10 +4,14 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import type { Task } from "@/lib/api/endpoints/tasks";
+import { useKeepFocus } from "@/lib/useKeepFocus";
 
 import { ResultPreviewDialog } from "./ResultPreviewDialog";
 import type { TaskEntry, TaskQueryState } from "./taskStore";
 import { cardState, failureDetail, formatDateTime, statusLabel } from "./taskView";
+
+/** 重查结束后焦点去向：仍有异常时回到"重新查询"按钮，异常消失（按钮卸载）时落在卡片本身（F-19）。 */
+const FOCUS_AFTER_REFETCH = ["button[data-refetch]"];
 
 const STATE_CLASS = {
   pending: "border-zinc-200 dark:border-zinc-800",
@@ -45,9 +49,13 @@ export function TaskCard({
   const { task, query } = entry;
   const state = cardState(task);
   const label = `任务 #${task.taskId}`;
+  const cardRef = useRef<HTMLElement>(null);
+  const armFocus = useKeepFocus(cardRef, query.status === "loading", FOCUS_AFTER_REFETCH);
 
   return (
     <article
+      ref={cardRef}
+      tabIndex={-1}
       aria-label={label}
       data-state={state}
       data-query={query.error ? "error" : "ok"}
@@ -67,7 +75,15 @@ export function TaskCard({
           </p>
         </div>
       </div>
-      {query.error && <QueryErrorNotice query={query} onRetry={() => onRefetch(task.taskId)} />}
+      {query.error && (
+        <QueryErrorNotice
+          query={query}
+          onRetry={() => {
+            armFocus();
+            onRefetch(task.taskId);
+          }}
+        />
+      )}
     </article>
   );
 }
@@ -171,6 +187,7 @@ function QueryErrorNotice({ query, onRetry }: { query: TaskQueryState; onRetry: 
       <span className="min-w-0 break-words">{message}</span>
       <button
         type="button"
+        data-refetch
         onClick={onRetry}
         disabled={retrying}
         className="shrink-0 rounded border border-amber-500 px-2 py-0.5 font-medium hover:bg-amber-100 focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:outline-none disabled:cursor-wait disabled:opacity-60 dark:hover:bg-amber-900/40"

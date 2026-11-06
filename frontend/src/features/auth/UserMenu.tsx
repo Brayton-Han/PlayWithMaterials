@@ -40,7 +40,7 @@ function AccountDropdown({ username, onLogout }: { username: string; onLogout: (
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelId = useId();
 
-  // 点击外部或按 Escape 关闭；Escape 时焦点回到触发按钮
+  // 点击外部或按 Escape 关闭；Escape 时焦点回到触发按钮；Tab 移出菜单时关闭（见容器 onBlur）
   useEffect(() => {
     if (!open) return;
     function onPointerDown(event: PointerEvent) {
@@ -66,7 +66,15 @@ function AccountDropdown({ username, onLogout }: { username: string; onLogout: (
   }
 
   return (
-    <div ref={containerRef} className="relative">
+    <div
+      ref={containerRef}
+      className="relative"
+      onBlur={(event) => {
+        // Tab 移出菜单（焦点到了菜单外的元素）时关闭，避免展开的菜单遮住后面获得焦点的内容（F-19）
+        const next = event.relatedTarget;
+        if (next instanceof Node && !event.currentTarget.contains(next)) setOpen(false);
+      }}
+    >
       <button
         ref={buttonRef}
         type="button"

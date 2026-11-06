@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { Task } from "@/lib/api/endpoints/tasks";
 import { makeTask } from "@/test/fixtures";
+import { simulateFocusFixup } from "@/test/focus";
 
 import { TaskCard } from "./TaskCard";
 import type { TaskEntry, TaskQueryState } from "./taskStore";
@@ -149,6 +150,35 @@ describe("TaskCard 外观", () => {
 
     expect(within(card).getByRole("status")).toHaveTextContent("状态获取失败");
     expect(within(card).getByRole("button", { name: "重新查询中…" })).toBeDisabled();
+  });
+
+  it("重新查询结束后焦点不丢失：仍异常 → 回到按钮，异常消失 → 落在卡片上（F-19）", async () => {
+    const user = userEvent.setup();
+    const { card, onRefetch, rerender } = renderCard(processing(), networkError);
+    const show = (query: TaskQueryState) =>
+      rerender(<TaskCard entry={{ task: processing(), query }} onRefetch={onRefetch} />);
+    const loading: TaskQueryState = { status: "loading", error: networkError.error };
+
+    // 第一次重查仍失败：焦点回到"重新查询"
+    await user.click(within(card).getByRole("button", { name: "重新查询" }));
+    show(loading);
+    simulateFocusFixup(); // 真实浏览器：按钮被禁用后焦点丢回 body
+    show(networkError);
+    expect(within(card).getByRole("button", { name: "重新查询" })).toHaveFocus();
+
+    // 第二次重查成功：提示和按钮卸载，焦点落在卡片本身
+    await user.click(within(card).getByRole("button", { name: "重新查询" }));
+    show(loading);
+    simulateFocusFixup();
+    show(IDLE);
+    expect(within(card).queryByRole("button", { name: "重新查询" })).not.toBeInTheDocument();
+    expect(card).toHaveFocus();
+  });
+
+  it("后台轮询结束不会抢走焦点（未从卡片内发起重查）", () => {
+    const { rerender } = renderCard(processing(), { status: "loading" });
+    rerender(<TaskCard entry={{ task: processing(), query: IDLE }} onRefetch={vi.fn()} />);
+    expect(document.body).toHaveFocus();
   });
 
   it("404：提示任务不存在或无权访问，仍可手动重查", async () => {

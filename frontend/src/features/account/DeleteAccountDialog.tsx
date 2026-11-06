@@ -6,9 +6,13 @@ import { TextField } from "@/components/TextField";
 import { useAuth } from "@/features/auth/AuthProvider";
 import { formErrorMessage } from "@/features/auth/formErrors";
 import { isAbortError, isApiError } from "@/lib/api/client";
+import { useKeepFocus } from "@/lib/useKeepFocus";
 
 /** 必须完全一致：区分大小写、不去除首尾空格（OQ-26 余项临时默认）。服务端同样校验。 */
 export const DELETE_CONFIRM_TEXT = "DELETE";
+
+/** 删除失败后焦点回到确认输入框（删除中输入框和按钮都被禁用，焦点会丢失）。 */
+const FOCUS_AFTER_DELETE = ['input[name="confirmText"]'];
 
 const dangerButtonClass =
   "rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50";
@@ -70,6 +74,7 @@ export function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
   const [confirmText, setConfirmText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const armFocus = useKeepFocus(dialogRef, deleting, FOCUS_AFTER_DELETE);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -86,6 +91,7 @@ export function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!confirmed || deleting) return;
+    armFocus();
     setDeleting(true);
     setError(null);
     try {

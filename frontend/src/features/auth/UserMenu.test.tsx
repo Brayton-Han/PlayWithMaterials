@@ -58,6 +58,28 @@ describe("UserMenu", () => {
     expect(screen.queryByRole("link", { name: "我的记录" })).not.toBeInTheDocument();
   });
 
+  it("closes when keyboard focus tabs out of the menu (F-19)", async () => {
+    server.use(http.get("/api/auth/me", () => HttpResponse.json(makeUser("demo1"))));
+    const user = userEvent.setup();
+    render(
+      <AuthProvider>
+        <UserMenu />
+        <a href="/after">菜单后的链接</a>
+      </AuthProvider>,
+    );
+    (await screen.findByRole("button", { name: /demo1/ })).focus();
+    await user.keyboard("{Enter}");
+    await user.tab(); // 我的记录
+    await user.tab(); // 账户设置
+    await user.tab(); // 退出
+    expect(screen.getByRole("button", { name: "退出" })).toHaveFocus();
+    expect(screen.getByRole("link", { name: "我的记录" })).toBeInTheDocument();
+
+    await user.tab();
+    expect(screen.getByRole("link", { name: "菜单后的链接" })).toHaveFocus();
+    expect(screen.queryByRole("link", { name: "我的记录" })).not.toBeInTheDocument();
+  });
+
   it("logs out and switches back to the login / register links", async () => {
     const logout = vi.fn(() => new HttpResponse(null, { status: 204 }));
     server.use(
