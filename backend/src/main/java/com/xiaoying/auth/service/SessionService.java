@@ -62,6 +62,23 @@ public class SessionService {
         }
     }
 
+    /**
+     * 作废该用户除 {@code currentToken} 外的全部会话（修改密码后，OQ-25 余项临时默认）。
+     * {@code currentToken} 已由拦截器校验过，这里仍防御性地处理空值：此时作废全部会话。
+     */
+    public void revokeOthers(long userId, String currentToken) {
+        if (isPlausible(currentToken)) {
+            sessionMapper.deleteByUserIdExcept(userId, hash(currentToken));
+        } else {
+            sessionMapper.deleteByUserId(userId);
+        }
+    }
+
+    /** 作废该用户的全部会话（删除账户）。 */
+    public void revokeAll(long userId) {
+        sessionMapper.deleteByUserId(userId);
+    }
+
     static String hash(String token) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.US_ASCII));

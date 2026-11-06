@@ -5,8 +5,10 @@ import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.hamcrest.Matchers.not;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -387,7 +389,11 @@ class AuthControllerIT {
         mvc.perform(get("/api/tasks/42")).andExpect(status().isUnauthorized());
         // POST /api/tasks（T-041）不限定 consumes，非 multipart 的匿名请求同样先得到 401
         mvc.perform(post("/api/tasks")).andExpect(status().isUnauthorized());
-        mvc.perform(get("/api/account")).andExpect(status().isUnauthorized());
+        // 账户接口（T-012）：真实路由与方法；不支持的方法会先得到 405（路由先于鉴权拦截器）
+        mvc.perform(put("/api/account/password").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(delete("/api/account").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isUnauthorized());
         mvc.perform(get("/files/uploads/2026/11/x.png")).andExpect(status().isUnauthorized());
         mvc.perform(get("/files/results/1/x.png")).andExpect(status().isUnauthorized());
     }

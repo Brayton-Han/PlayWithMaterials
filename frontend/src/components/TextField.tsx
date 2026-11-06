@@ -1,4 +1,4 @@
-import { useId, type InputHTMLAttributes } from "react";
+import { useId, type InputHTMLAttributes, type Ref } from "react";
 
 interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "id"> {
   label: string;
@@ -6,10 +6,12 @@ interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "id
   hint?: string;
   /** 校验错误；有值时输入框标记为 aria-invalid 并用 aria-describedby 关联 */
   error?: string;
+  /** 指向内部 input（React 19 ref 作为普通 prop），如对话框打开后聚焦输入框 */
+  ref?: Ref<HTMLInputElement>;
 }
 
 /** 带标签、说明和错误提示的单行输入框。 */
-export function TextField({ label, hint, error, className, ...inputProps }: TextFieldProps) {
+export function TextField({ label, hint, error, className, ref, ...inputProps }: TextFieldProps) {
   const id = useId();
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
@@ -21,6 +23,7 @@ export function TextField({ label, hint, error, className, ...inputProps }: Text
         {label}
       </label>
       <input
+        ref={ref}
         id={id}
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy}

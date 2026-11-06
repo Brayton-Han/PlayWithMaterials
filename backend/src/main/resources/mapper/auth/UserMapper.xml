@@ -28,4 +28,16 @@
         SELECT <include refid="columns"/> FROM users
         WHERE id = #{id} AND deleted_at IS NULL
     </select>
+
+    <!-- updated_at 由 ON UPDATE CURRENT_TIMESTAMP(3) 维护 -->
+    <update id="updatePassword">
+        UPDATE users SET password_hash = #{passwordHash}
+        WHERE id = #{id} AND deleted_at IS NULL
+    </update>
+
+    <!-- 删除后 active_email 生成列变为 NULL，同一邮箱可再注册；username 仍占用（OQ-31 临时默认） -->
+    <update id="softDelete">
+        UPDATE users SET deleted_at = NOW(3)
+        WHERE id = #{id} AND deleted_at IS NULL
+    </update>
 </mapper>
