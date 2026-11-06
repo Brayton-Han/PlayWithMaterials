@@ -398,6 +398,7 @@ flowchart TD
 - **依赖**：T-060, T-062
 - **完成定义**：F-16 清单逐条打勾；另一个人只看 README 就能完成演示。
 - **相关**：F-16
+- **状态**：进行中（2026-11-05 README 已撰写，待人工验收，未标记 Done）。README 按 F-16 清单逐项重写（检查清单、演示指南 0 ~ 8 + curl、身份方案、状态 / 阶段 / 后台执行、接口与字段表、错误码、配置项、DB 初始化与种子、部署与回滚、完成情况与已知限制含 OQ-13、实际投入、AI 使用说明、依赖与素材来源、交付物与验收 commit）。已验证：在独立 compose 项目（`-p xiaoying-t061`，端口 3261 / 8261）中按 README 执行 simulation GET / PUT（含超范围 400）、curl 登录、提交、指定 GENERATING 失败、成功任务、历史查询、分类筛选，结果与 README 一致；`stop` / `start backend` 后处理中任务保持 `PROCESSING / GENERATING`、模拟配置回到默认（与"已知限制 1"一致）；README 中的 `mysqldump` 备份与 `IMAGE_TAG=… up -d --no-build --wait` 命令可执行。未验证：另一个人只看 README 完成演示；"实际投入工时"需作者填写；浏览器演示步骤沿用 T-062 的验收结果，本任务未重新在浏览器执行。无代码、契约、Schema 变更。
 
 ---
 
