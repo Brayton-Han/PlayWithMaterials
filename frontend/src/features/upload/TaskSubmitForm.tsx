@@ -13,18 +13,19 @@ type SubmitTemplate = Pick<TemplateDetail, "templateId" | "requiredImageCount" |
 
 interface TaskSubmitFormProps {
   template: SubmitTemplate;
-  /** 202 受理后的回调；写入任务区（taskStore）与上传区是否清空由 T-053 接入（OQ-07）。 */
-  onAccepted?: (task: Task) => void;
+  /** 202 受理后的回调（任务 + 请求发起时的 session epoch），由详情页写入任务区（taskStore，T-053）。 */
+  onAccepted?: (task: Task, epoch: number) => void;
 }
 
 /**
  * 上传区 + 提交（F-03、F-04）：选图在本地完成（T-031），点击提交时图片和模板 ID 在同一个请求中上传（OQ-05），
- * 显示上传进度 → "提交中" → 受理；上传 / 提交期间锁定上传位并禁用按钮；失败时保留已选文件并显示原因。
+ * 显示上传进度 → "提交中" → 受理；上传 / 提交期间锁定上传位并禁用按钮；失败时保留已选文件并显示原因；
+ * 受理后清空上传位（OQ-07 临时默认）并把任务交给 `onAccepted`。
  * 上传位数量变化时由调用方用 key 重新挂载。
  */
 export function TaskSubmitForm({ template, onAccepted }: TaskSubmitFormProps) {
   const { state, busy, submit } = useSubmitTask(template.templateId);
-  const { slots, allSelected, files, select, remove, applyServerErrors } = useSlots(
+  const { slots, allSelected, files, select, remove, applyServerErrors, clear } = useSlots(
     template.requiredImageCount,
     template,
     busy,
@@ -39,9 +40,11 @@ export function TaskSubmitForm({ template, onAccepted }: TaskSubmitFormProps) {
     if (!enabled) return;
     setAccepted(null);
     submit(files, {
-      onAccepted: (task) => {
+      onAccepted: (task, epoch) => {
         setAccepted(task);
-        onAccepted?.(task);
+        // OQ-07 临时默认：受理后清空上传区，便于制作下一张
+        clear();
+        onAccepted?.(task, epoch);
       },
       onFieldErrors: applyServerErrors,
     });

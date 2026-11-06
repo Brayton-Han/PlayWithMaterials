@@ -345,6 +345,7 @@ flowchart TD
 - **受 OQ 影响**：OQ-07
 - **完成定义**：提交后 1s 内出现新卡片，按钮不再显示"提交中"；连续提交 3 次出现 3 张独立卡片。
 - **相关**：F-05, F-09
+- **状态**：Done（2026-11-05）。`useSubmitTask` 的 `onAccepted(task, epoch)` 额外带上请求发起时的 session epoch；`useSlots` 新增 `clear()`（清空全部上传位并释放 blob URL，不受锁定限制）；`TaskSubmitForm` 受理后清空上传位（OQ-07 临时默认）、保留"任务 #id 已受理"提示并转交 `onAccepted`；详情页 `TemplateUploadArea` 在 `onAccepted` 中调用 `taskStore.upsertFromServer(task, epoch)`，右栏 History 随即出现 PENDING 卡片，`useTaskTracker` 订阅 store 自动开始跟踪；提交失败不写入 store。测试：新增 `SubmitFlow.test.tsx`（8，真实详情页 + AuthProvider + MSW + 假 XHR）：202 后同一次渲染内出现"等待处理"卡片、按钮回到"提交制作"且无进度条、上传位清空后可再次选图；连续 3 次提交 3 张独立卡片、新的在前；网络错误 / 500 / 400 slotIndex / 503 均不插入任务、不发查询、已选文件保留；失败后重新提交成功只出现一张卡片；受理后经 2 s 间隔查询并推进到"处理中 · 素材检查中"。去掉详情页的 `onAccepted` 接线后其中 4 项成功路径用例失败（确认测试覆盖接线）。`TaskSubmitForm.test.tsx` / `TemplateDetailPage.test.tsx` 中 3 项按新行为更新（受理后上传位清空、按钮因未选图禁用，`onAccepted` 带 epoch，blob URL 被释放）。前端 264 个单测（无 act / 未处理 rejection 警告）、`lint`、`typecheck`、`build` 通过。浏览器验证（headless Chrome + CDP，demo1，`demo-postcard`，`samples/sample-1.png` + `sample-2.png`）：dev 栈（:3000）连续提交 3 次，点击到卡片出现分别为 111 / 22 / 23 ms，每次按钮都是"提交制作"（因已清空而禁用）、上传区无预览，3 张卡片均跟踪到"制作完成"，之后 6 s 内无新的 `/api/tasks` 请求（3 POST、12 GET）；`docker compose up --build`（端口 3100 / 8180 / 3407 与 dev 栈并存）三个服务健康，经 :3100 同样通过（90 / 23 / 26 ms）。说明：History 目前只显示本次页面会话中提交的任务，刷新页面后历史加载属于 T-054；未改后端、契约与 Schema，因此未运行 `mvnw verify`；登录后才能进入跟踪，未登录分支沿用 T-023 / T-052 已有测试。
 
 #### T-054 刷新恢复与历史加载（详情页） · S · P0
 - **范围**：进入详情页（或登录状态确认后）用 templateId 请求历史并填入 store，未结束的任务自动进入跟踪；历史加载失败时显示错误 + 重试（不显示成空列表）。

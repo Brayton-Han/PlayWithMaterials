@@ -57,6 +57,11 @@ export interface UseSlotsResult {
   remove: (index: number) => void;
   /** 把服务端 400 的 `fieldErrors[].slotIndex` 标到对应上传位，保留已选文件（F-03 规则 7）。 */
   applyServerErrors: (errors: readonly FieldError[]) => void;
+  /**
+   * 清空全部上传位并释放 blob URL（提交受理后，OQ-07 临时默认：清空）。
+   * 由程序调用（受理回调中提交状态刚回到 idle），因此不受 `locked` 限制。
+   */
+  clear: () => void;
 }
 
 /**
@@ -125,6 +130,17 @@ export function useSlots(count: number, rules: SlotRules, locked = false): UseSl
     [update],
   );
 
+  const clear = useCallback(() => {
+    const current = latest.current;
+    for (const slot of current) {
+      const url = previewOf(slot);
+      if (url) URL.revokeObjectURL(url);
+    }
+    const next = emptySlots(current.length);
+    latest.current = next;
+    setSlots(next);
+  }, []);
+
   // 卸载时释放所有仍在使用的 blob URL
   useEffect(() => {
     const ref = latest;
@@ -139,5 +155,5 @@ export function useSlots(count: number, rules: SlotRules, locked = false): UseSl
   const allSelected = slots.every((slot) => slot.status === "selected");
   const files = allSelected ? slots.map((slot) => (slot as Extract<Slot, { status: "selected" }>).file) : null;
 
-  return { slots, allSelected, files, select, remove, applyServerErrors };
+  return { slots, allSelected, files, select, remove, applyServerErrors, clear };
 }

@@ -217,7 +217,9 @@ describe("TemplateDetailPage", () => {
 
       await xhr.respond(202, makeTask({ taskId: "42", templateId: "demo-postcard" }));
       expect(screen.getByText("提交成功，任务 #42 已受理，正在后台制作")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "提交制作" })).toBeEnabled();
+      // 上传区已清空（OQ-07），按钮回到"提交制作"、等待重新选图
+      expect(screen.getByRole("button", { name: "提交制作" })).toBeDisabled();
+      expect(screen.queryByRole("img", { name: "第 1 张图片预览" })).not.toBeInTheDocument();
     });
 
     it("aborts an in-flight upload on logout and clears the selection", async () => {
