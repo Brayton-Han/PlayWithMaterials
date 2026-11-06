@@ -111,6 +111,36 @@ describe("TemplateDetailPage", () => {
     expect(screen.getByRole("complementary", { name: "History" })).toBeInTheDocument();
   });
 
+  it("lets a logged-in user pick an image into a slot with a local preview and no upload request", async () => {
+    URL.createObjectURL = vi.fn(() => "blob:http://localhost:3000/preview");
+    URL.revokeObjectURL = vi.fn();
+    useCatalog([{ ...POSTCARD, acceptedMimeTypes: ["image/png"], maxFileSizeBytes: 1024 * 1024 }]);
+    const requests: string[] = [];
+    server.events.on("request:start", ({ request }) => requests.push(`${request.method} ${new URL(request.url).pathname}`));
+    renderPage("demo-postcard", loggedIn);
+    const user = userEvent.setup({ applyAccept: false });
+
+    const first = await screen.findByLabelText("选择第 1 张图片");
+    expect(first).toHaveAttribute("accept", "image/png");
+    // 监听器确实记录到了页面加载时的请求
+    expect(requests).toContain("GET /api/templates/demo-postcard");
+    const before = requests.length;
+
+    await user.upload(first, new File(["png"], "a.png", { type: "image/png" }));
+    expect(screen.getByRole("img", { name: "第 1 张图片预览" })).toHaveAttribute(
+      "src",
+      "blob:http://localhost:3000/preview",
+    );
+
+    // 模板只接受 PNG：JPG 被拦截，提示来自接口给出的类型
+    await user.upload(screen.getByLabelText("选择第 2 张图片"), new File(["jpg"], "b.jpg", { type: "image/jpeg" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("第 2 张图片格式不支持，仅支持 PNG");
+    expect(screen.queryByRole("img", { name: "第 2 张图片预览" })).not.toBeInTheDocument();
+
+    expect(requests.slice(before)).toEqual([]);
+    server.events.removeAllListeners();
+  });
+
   it("replaces the upload area and History with a login prompt for anonymous users", async () => {
     useCatalog([POSTCARD]);
     renderPage("demo-postcard");

@@ -8,6 +8,8 @@ import { LoginPrompt } from "@/features/auth/LoginPrompt";
 import { useRequireAuth } from "@/features/auth/useRequireAuth";
 import { isApiError } from "@/lib/api/client";
 import { getTemplate, type TemplateDetail } from "@/lib/api/endpoints/catalog";
+import { UploadSlots } from "@/features/upload/UploadSlots";
+import { useSlots } from "@/features/upload/useSlots";
 import { useKeyedLoad } from "@/lib/useKeyedLoad";
 
 import { listPageHref } from "./listReturn";
@@ -23,7 +25,7 @@ function isTemplateNotFound(error: unknown): boolean {
 }
 
 /**
- * 模板详情页（F-02）：返回、标题、封面、描述、素材要求；左栏上传区（T-031 填充），右栏 History（T-052 填充）。
+ * 模板详情页（F-02）：返回、标题、封面、描述、素材要求；左栏上传区（T-031 选图，T-032 提交），右栏 History（T-052 填充）。
  * 未登录时上传区和 History 替换为"登录后即可制作"提示，登录后回到本页（OQ-23 余项 1 临时默认）。
  */
 export function TemplateDetailPage({ templateId }: { templateId: string }) {
@@ -81,7 +83,7 @@ function TemplateDetailLayout({ template, loginNext }: { template: TemplateDetai
             上传素材
           </h2>
           <AuthOnly loginNext={loginNext}>
-            <UploadSlotsPlaceholder count={template.requiredImageCount} />
+            <TemplateUploadArea key={template.templateId} template={template} />
           </AuthOnly>
         </section>
       </div>
@@ -109,23 +111,13 @@ function AuthOnly({ loginNext, children }: { loginNext: string; children: ReactN
   );
 }
 
-/** 上传位占位：数量与 requiredImageCount 一致（F-02 规则 2）；选图、预览与提交由 T-031 / T-032 实现。 */
-function UploadSlotsPlaceholder({ count }: { count: number }) {
-  return (
-    <div className="flex flex-col gap-3">
-      <ol aria-label="上传位" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {Array.from({ length: count }, (_, i) => (
-          <li
-            key={i}
-            className="flex aspect-square items-center justify-center rounded-lg border border-dashed border-zinc-300 text-sm text-zinc-400 dark:border-zinc-700"
-          >
-            第 {i + 1} 张
-          </li>
-        ))}
-      </ol>
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">选图与提交将在 T-031 / T-032 中实现。</p>
-    </div>
-  );
+/**
+ * 上传区：上传位数量 = requiredImageCount（F-02 规则 2），选图、预览、替换、移除在本地完成（T-031）。
+ * 提交按钮、上传进度与锁定由 T-032 接入。
+ */
+function TemplateUploadArea({ template }: { template: TemplateDetail }) {
+  const { slots, select, remove } = useSlots(template.requiredImageCount, template);
+  return <UploadSlots slots={slots} rules={template} onSelect={select} onRemove={remove} />;
 }
 
 function TemplateCover({ url, title }: { url: string; title: string }) {

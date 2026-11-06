@@ -220,6 +220,7 @@ flowchart TD
 - **依赖**：T-023
 - **完成定义**：组件测试：选择合法文件后出现预览且没有网络请求；非法文件不进入上传位；替换、移除后状态正确；锁定期间不能操作。
 - **相关**：F-03, F-19
+- **状态**：Done（2026-11-05）。新增 `features/upload/useSlots.ts`（上传位状态 `empty | selected(file, previewUrl) | invalid(reason)`；客户端校验类型 / 空文件 / 大小，规则与提示文案全部来自模板接口；blob URL 在替换、移除、卸载时 `revokeObjectURL`；`locked` 时忽略选择 / 移除；`applyServerErrors(fieldErrors)` 按 `slotIndex` 标错并保留文件；`allSelected` / `files` 供 T-032）与 `UploadSlots.tsx`（点击或拖入选择、本地预览、替换、移除，`aria-label` "选择第 n 张图片" / "移除第 n 张图片"，错误 `role=alert` 并经 `aria-describedby` 关联）；详情页占位替换为真实上传位（按 templateId 重新挂载）。`UploadSlots.test.tsx`（21）：1/2/3 个上传位；选择合法文件后出现 blob 预览，`fetch` / XHR 均未调用；不支持的类型、无类型、超限、空文件不进入上传位并显示原因，不创建 blob URL；恰好等于上限可通过；替换时旧 URL 被 revoke；用不合法文件替换时保留原文件并提示；移除释放 URL 且不影响其他上传位、可重新选择同一文件；拖入与点击同样校验；锁定期间输入与移除按钮禁用，界面操作和直接调用 hook 均不改变状态，解锁后恢复；服务端 `slotIndex` 错误显示在对应上传位、保留预览、`allSelected=false`，越界 / 无 slotIndex 的错误被忽略，替换或移除后清除；卸载时释放全部 URL。`TemplateDetailPage.test.tsx` 新增 1 项（登录后在详情页选图出现预览、PNG-only 模板拦截 JPG，选择期间无任何请求）。前端 141 个单测、`lint`、`typecheck`、`build` 通过。dev 栈下用 headless Chrome 登录 demo1 手动验证：证件照（PNG-only、1 MB）依次拦截 JPG / GIF / 1.1 MB PNG / 空文件，合法 PNG 出现 blob 预览，超限替换保留原图，移除后恢复空位，选择期间无网络请求；明信片两张选齐与替换正常；文件输入可键盘聚焦且有可见焦点框；360px 宽无横向滚动。说明：锁定只有组件测试，真实页面的锁定与提交按钮、服务端 `slotIndex` 回显由 T-032 接入后验证；`select` 不支持一次选多张自动分配到多个上传位；客户端类型判断依据浏览器给出的 `File.type`（扩展名推断），真实类型由服务端魔数校验（OQ-17）；`docker compose up --build`（demo 构建）未重新运行，仅在 dev 容器中验证了 `next build`。
 
 #### T-032 提交请求状态与上传进度 · M · P0
 - **范围**：
