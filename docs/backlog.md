@@ -373,6 +373,7 @@ flowchart TD
 - **依赖**：T-051, T-052, T-032
 - **完成定义**：`npm test` 在本地和 CI 都通过。
 - **相关**：F-15
+- **状态**：实现完成，**待验证**（2026-11-05；本地 `npm test` 通过，CI 尚未运行（未推送），不标记 Done）。纯测试任务：生产代码、契约、Schema 均未改动。新增 `features/tasks/CoreBehaviors.test.tsx`（7），渲染真实详情页（`AuthProvider` + `UserMenu` + `TemplateDetailPage`），经 MSW（身份 / 模板 / 历史 / 单任务查询）、`FakeXhr`（提交）与 fake timers 驱动"历史加载或提交受理 → taskStore → useTaskTracker → TaskCard"完整链路，逐项对应 implementation-plan 的 T-056 清单：#1 3 个任务按调用次数各自推进 5 轮，每轮逐卡断言状态标题，最终 1 失败（阶段 + 原因只在该卡）2 成功（结果图各自独立），每个任务只查询到自身终态；#2 A 持续 500 时保留"处理中 · 生成中" + "状态获取失败" + "重新查询"、不显示"制作失败"，B 推进到成功，服务恢复后点 A 的"重新查询"立即恢复且提示消失；#3 服务端 FAILED 与查询异常并排对比：状态标题、`data-state`、`data-query`、样式类均不同，终态任务从不查询；#4 先终态的任务不再被查询，全部终态后再推进 10 个间隔单任务查询与历史请求数都不增加；#5 两例：退出时在途查询被取消，迟到响应不写入 store、页面无旧任务；退出后以 demo2 登录，且让 fetch 忽略 AbortSignal（模拟取消未生效、响应真正到达），demo1 的迟到响应仍不写入，只显示 demo2 的任务；#6 网络错误时上传区显示"上传失败：网络连接异常，已选图片已保留，可直接重新提交"、两张预览仍在、任务区无卡片，不重新选图直接"重新提交"（发送同样的文件）受理后，服务端 FAILED 显示在任务卡片（"素材检查阶段 · 原因"），上传区无错误。变异验证（验证后已 `git checkout` 还原）：终态仍跟踪 → 4 例失败；去掉查询异常提示 → #2 #3 失败；查询失败时把任务改成 FAILED → #2 #3 失败；去掉提交错误提示 → #6 失败；同时去掉 store epoch 校验与跟踪器 `live()` 校验 → #5（demo2）失败（只去掉其一时由另一层拦截，单层校验见 `taskStore.test`、`useTaskTracker.test`）。前端 297 个单测（23 个文件）、`lint`、`typecheck`、`build` 通过，新文件连续运行 3 次稳定。说明：交互用 `fireEvent`（fake timers 冻结 user-event 的内部等待）；登录用测试内按钮直接调用 `useAuth().login`（登录表单由 `LoginForm.test` 覆盖）；requirements F-15 前端条目中"切换用户后丢弃旧响应"由 #5 覆盖。
 
 ### M5 交付
 
