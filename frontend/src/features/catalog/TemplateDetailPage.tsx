@@ -8,6 +8,7 @@ import { LoginPrompt } from "@/features/auth/LoginPrompt";
 import { useRequireAuth } from "@/features/auth/useRequireAuth";
 import { isApiError } from "@/lib/api/client";
 import { getTemplate, type TemplateDetail } from "@/lib/api/endpoints/catalog";
+import { HistoryPanel } from "@/features/tasks/HistoryPanel";
 import { TaskSubmitForm } from "@/features/upload/TaskSubmitForm";
 import { useKeyedLoad } from "@/lib/useKeyedLoad";
 
@@ -24,7 +25,7 @@ function isTemplateNotFound(error: unknown): boolean {
 }
 
 /**
- * 模板详情页（F-02）：返回、标题、封面、描述、素材要求；左栏上传区（T-031 选图，T-032 提交），右栏 History（T-052 填充）。
+ * 模板详情页（F-02）：返回、标题、封面、描述、素材要求；左栏上传区（T-031 选图，T-032 提交），右栏 History（T-052）。
  * 未登录时上传区和 History 替换为"登录后即可制作"提示，登录后回到本页（OQ-23 余项 1 临时默认）。
  */
 export function TemplateDetailPage({ templateId }: { templateId: string }) {
@@ -91,7 +92,7 @@ function TemplateDetailLayout({ template, loginNext }: { template: TemplateDetai
           History
         </h2>
         <AuthOnly loginNext={loginNext}>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">当前模板的制作记录将在 T-052 中实现。</p>
+          <HistoryPanel key={template.templateId} templateId={template.templateId} />
         </AuthOnly>
       </aside>
     </div>

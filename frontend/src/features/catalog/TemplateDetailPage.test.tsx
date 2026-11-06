@@ -1,9 +1,11 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AuthProvider, useAuth } from "@/features/auth/AuthProvider";
+import { getSessionEpoch } from "@/features/auth/session";
+import { taskStore } from "@/features/tasks/taskStore";
 import type { TemplateDetail } from "@/lib/api/endpoints/catalog";
 import { installFakeXhr, lastXhr } from "@/test/fakeXhr";
 import { makeTask, makeUser } from "@/test/fixtures";
@@ -110,6 +112,36 @@ describe("TemplateDetailPage", () => {
     expect(within(slots).getAllByRole("listitem")).toHaveLength(count);
     expect(screen.queryByText("登录后即可制作")).not.toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "History" })).toBeInTheDocument();
+  });
+
+  it("shows only this template's tasks from the task store in History, with an empty state otherwise", async () => {
+    useCatalog([POSTCARD]);
+    renderPage("demo-postcard", loggedIn);
+
+    const history = await screen.findByRole("complementary", { name: "History" });
+    expect(await within(history).findByText("还没有制作记录")).toBeInTheDocument();
+    expect(within(history).getByRole("button", { name: "刷新任务状态" })).toBeInTheDocument();
+
+    // 终态任务不会触发跟踪请求
+    const failedTask = makeTask({
+      taskId: "8",
+      templateId: "demo-postcard",
+      status: "FAILED",
+      stage: "GENERATING",
+      failedStage: "GENERATING",
+      failureCode: "SIMULATED_FAILURE",
+      failureReason: "模拟失败：生成阶段出错",
+    });
+    act(() => {
+      taskStore
+        .getState()
+        .upsertMany([failedTask, { ...failedTask, taskId: "9", templateId: "other" }], getSessionEpoch());
+    });
+
+    const card = within(history).getByRole("article", { name: "任务 #8" });
+    expect(card).toHaveTextContent("制作失败");
+    expect(card).toHaveTextContent("生成阶段 · 模拟失败：生成阶段出错");
+    expect(within(history).queryByRole("article", { name: "任务 #9" })).not.toBeInTheDocument();
   });
 
   it("lets a logged-in user pick an image into a slot with a local preview and no upload request", async () => {
