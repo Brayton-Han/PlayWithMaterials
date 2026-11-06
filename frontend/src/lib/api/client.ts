@@ -114,7 +114,7 @@ export interface RequestOptions {
 }
 
 /** 浏览器中相对路径按当前页面解析；测试环境（jsdom）同样有 location。 */
-function resolveUrl(path: string): string {
+export function resolveUrl(path: string): string {
   if (typeof window !== "undefined" && window.location?.origin) {
     return new URL(path, window.location.origin).toString();
   }
@@ -164,9 +164,19 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 }
 
 async function toHttpError(response: Response): Promise<ApiError> {
+  let text = "";
+  try {
+    text = await response.text();
+  } catch {
+    // 读取错误体失败，使用通用文案
+  }
+  return httpErrorFromBody(response.status, text);
+}
+
+/** 把 HTTP 错误响应（状态码 + 原始响应体）转换为 ApiError；fetch 与 XHR 上传（upload.ts）共用。 */
+export function httpErrorFromBody(status: number, text: string): ApiError {
   let payload: Partial<ErrorResponse> | undefined;
   try {
-    const text = await response.text();
     const parsed: unknown = text ? JSON.parse(text) : undefined;
     if (parsed && typeof parsed === "object" && typeof (parsed as ErrorResponse).code === "string") {
       payload = parsed as ErrorResponse;
@@ -176,7 +186,7 @@ async function toHttpError(response: Response): Promise<ApiError> {
   }
   return new ApiError({
     kind: "http",
-    status: response.status,
+    status,
     code: payload?.code,
     message: payload?.message || GENERIC_HTTP_ERROR_MESSAGE,
     details: payload?.details,
