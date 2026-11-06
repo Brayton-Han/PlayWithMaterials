@@ -18,7 +18,7 @@ export function HistoryPanel({ templateId }: { templateId: string }) {
     useCallback((state: TaskStoreState) => selectByTemplate(state.entries, templateId), [templateId]),
   );
   const { refetch, refetchAll } = useTaskTracker({ kind: "template", templateId });
-  const { load, reload } = useTaskHistory(templateId);
+  const { load, reload } = useTaskHistory({ kind: "template", templateId });
   const refresh = () => {
     reload();
     refetchAll();
