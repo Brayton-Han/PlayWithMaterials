@@ -8,8 +8,7 @@ import { LoginPrompt } from "@/features/auth/LoginPrompt";
 import { useRequireAuth } from "@/features/auth/useRequireAuth";
 import { isApiError } from "@/lib/api/client";
 import { getTemplate, type TemplateDetail } from "@/lib/api/endpoints/catalog";
-import { UploadSlots } from "@/features/upload/UploadSlots";
-import { useSlots } from "@/features/upload/useSlots";
+import { TaskSubmitForm } from "@/features/upload/TaskSubmitForm";
 import { useKeyedLoad } from "@/lib/useKeyedLoad";
 
 import { listPageHref } from "./listReturn";
@@ -112,12 +111,11 @@ function AuthOnly({ loginNext, children }: { loginNext: string; children: ReactN
 }
 
 /**
- * 上传区：上传位数量 = requiredImageCount（F-02 规则 2），选图、预览、替换、移除在本地完成（T-031）。
- * 提交按钮、上传进度与锁定由 T-032 接入。
+ * 上传区：上传位数量 = requiredImageCount（F-02 规则 2），选图、预览、替换、移除在本地完成（T-031）；
+ * 提交、上传进度、锁定与失败反馈见 TaskSubmitForm（T-032）。受理后写入任务区由 T-053 接入。
  */
 function TemplateUploadArea({ template }: { template: TemplateDetail }) {
-  const { slots, select, remove } = useSlots(template.requiredImageCount, template);
-  return <UploadSlots slots={slots} rules={template} onSelect={select} onRemove={remove} />;
+  return <TaskSubmitForm template={template} />;
 }
 
 function TemplateCover({ url, title }: { url: string; title: string }) {

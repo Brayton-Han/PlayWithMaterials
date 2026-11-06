@@ -1,11 +1,12 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AuthProvider } from "@/features/auth/AuthProvider";
+import { AuthProvider, useAuth } from "@/features/auth/AuthProvider";
 import type { TemplateDetail } from "@/lib/api/endpoints/catalog";
-import { makeUser } from "@/test/fixtures";
+import { installFakeXhr, lastXhr } from "@/test/fakeXhr";
+import { makeTask, makeUser } from "@/test/fixtures";
 import { server } from "@/test/msw/server";
 
 import { rememberListCategory } from "./listReturn";
@@ -139,6 +140,84 @@ describe("TemplateDetailPage", () => {
 
     expect(requests.slice(before)).toEqual([]);
     server.events.removeAllListeners();
+  });
+
+  describe("submitting (T-032)", () => {
+    const POSTCARD_PNG = new File(["png"], "a.png", { type: "image/png" });
+    const SECOND_PNG = new File(["png2"], "b.png", { type: "image/png" });
+
+    function LogoutButton() {
+      const { logout } = useAuth();
+      return (
+        <button type="button" onClick={() => void logout()}>
+          退出测试
+        </button>
+      );
+    }
+
+    async function selectAndSubmit() {
+      const user = userEvent.setup({ applyAccept: false });
+      await user.upload(await screen.findByLabelText("选择第 1 张图片"), POSTCARD_PNG);
+      await user.upload(screen.getByLabelText("选择第 2 张图片"), SECOND_PNG);
+      await user.click(screen.getByRole("button", { name: "提交制作" }));
+      return user;
+    }
+
+    beforeEach(() => {
+      installFakeXhr();
+      URL.createObjectURL = vi.fn(() => "blob:http://localhost:3000/preview");
+      URL.revokeObjectURL = vi.fn();
+      useCatalog([POSTCARD]);
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("uploads the selected images with progress, then shows the accepted task", async () => {
+      renderPage("demo-postcard", loggedIn);
+      await selectAndSubmit();
+      const xhr = lastXhr();
+
+      expect(xhr.url).toBe(`${window.location.origin}/api/tasks`);
+      expect(xhr.form).toEqual({ templateId: "demo-postcard", files: [POSTCARD_PNG, SECOND_PNG] });
+      xhr.progress(40, 100);
+      expect(screen.getByRole("progressbar", { name: "上传进度" })).toHaveAttribute("value", "40");
+      xhr.finishUpload();
+      expect(screen.getByRole("button", { name: "提交中…" })).toBeDisabled();
+
+      await xhr.respond(202, makeTask({ taskId: "42", templateId: "demo-postcard" }));
+      expect(screen.getByText("提交成功，任务 #42 已受理，正在后台制作")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "提交制作" })).toBeEnabled();
+    });
+
+    it("aborts an in-flight upload on logout and clears the selection", async () => {
+      server.use(http.post("/api/auth/logout", () => new HttpResponse(null, { status: 204 })));
+      server.use(http.get("/api/auth/me", loggedIn));
+      render(
+        <AuthProvider>
+          <LogoutButton />
+          <TemplateDetailPage templateId="demo-postcard" />
+        </AuthProvider>,
+      );
+      const user = await selectAndSubmit();
+      const xhr = lastXhr();
+
+      await user.click(screen.getByRole("button", { name: "退出测试" }));
+
+      expect(xhr.aborted).toBe(true);
+      // 切换会话后页面以新的 epoch 重新挂载：模板重新加载，上传区变为登录提示，已选文件被清空
+      const upload = await screen.findByRole("region", { name: "上传素材" });
+      expect(await within(upload).findByText("登录后即可制作")).toBeInTheDocument();
+      expect(screen.queryByRole("img", { name: "第 1 张图片预览" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("sends the user to login when the session has expired at submit time (401)", async () => {
+      renderPage("demo-postcard", loggedIn);
+      await selectAndSubmit();
+      await lastXhr().respond(401, { code: "UNAUTHENTICATED", message: "请先登录" });
+
+      expect(nav.router.replace).toHaveBeenCalledWith("/login?next=%2Ftemplates%2Fdemo-postcard");
+      expect(screen.queryByText(/提交失败/)).not.toBeInTheDocument();
+    });
   });
 
   it("replaces the upload area and History with a login prompt for anonymous users", async () => {
