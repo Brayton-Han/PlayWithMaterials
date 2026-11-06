@@ -16,7 +16,7 @@
 | 枚举 | `VARCHAR` + `CHECK (... IN (...))`，不用 MySQL `ENUM` | 增删枚举值只需改 CHECK，迁移简单；MyBatis 映射为 Java enum |
 | 布尔 / 软删除 | 软删除用 `deleted_at DATETIME(3) NULL` | 同时记录"是否删除"和"何时删除" |
 | 外键 | 全部声明；`ON DELETE RESTRICT`，仅 `task_assets → tasks` 为 `CASCADE`（用于提交失败时的补偿删除） | 业务数据只软删除，不会级联物理删除 |
-| 迁移 | Flyway：`V1__init_schema.sql`、`V2__seed_data.sql`；P1 加 `V3__task_step_logs.sql`。**已发布的迁移不修改，只追加** | 容器首次启动自动初始化；重复启动不重复执行（T-004 完成定义） |
+| 迁移 | Flyway：`V1__init_schema.sql`、`V2__seed_data.sql`。**已发布的迁移不修改，只追加** | 容器首次启动自动初始化；重复启动不重复执行（T-004 完成定义） |
 | 命名 | 表名复数蛇形；索引 `idx_<表>_<列>`，唯一 `uk_<表>_<列>`，外键 `fk_<表>_<引用表>`，检查 `chk_<表>_<含义>` | — |
 
 ---
@@ -30,7 +30,6 @@ erDiagram
   categories ||--o{ templates : "groups"
   templates ||--o{ tasks : "used by"
   tasks ||--|{ task_assets : "inputs (1..N)"
-  tasks ||--o{ task_step_logs : "P1 step log"
 
   users {
     bigint id PK
@@ -91,15 +90,6 @@ erDiagram
     varchar mime_type
     int size_bytes
     datetime created_at
-  }
-  task_step_logs {
-    bigint id PK
-    bigint task_id FK
-    varchar stage
-    varchar outcome
-    datetime started_at
-    datetime ended_at
-    varchar message
   }
 ```
 
@@ -222,7 +212,7 @@ erDiagram
 | `idx_tasks_user_created` | `(user_id, created_at, id)` | "我的记录"：`WHERE user_id = ? ORDER BY created_at DESC, id DESC`；单任务查询 `WHERE id = ? AND user_id = ?` 走 PK；删除账户废弃任务 `WHERE user_id = ? AND status IN (...)` 用前缀 `user_id` |
 | `idx_tasks_user_template_created` | `(user_id, template_id, created_at, id)` | 详情页 History：`WHERE user_id = ? AND template_id = ? ORDER BY created_at DESC, id DESC` |
 | `idx_tasks_template_id` | `(template_id)` | 外键 `template_id` 需要以它开头的索引（上面两个复合索引都以 `user_id` 开头，不满足），显式声明避免 MySQL 自动生成不规范命名的索引 |
-| `idx_tasks_status` | `(status)` | P1 T-072 启动时扫描 PENDING / PROCESSING 任务；数据量小，代价低 |
+| `idx_tasks_status` | `(status)` | 按状态筛选 PENDING / PROCESSING 任务；V1 已建，当前没有查询使用（已发布迁移不修改） |
 | `fk_tasks_users` | `FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT` | |
 | `fk_tasks_templates` | `FOREIGN KEY (template_id) REFERENCES templates(id) ON DELETE RESTRICT` | |
 | `chk_tasks_status` | `CHECK (status IN ('PENDING','PROCESSING','SUCCEEDED','FAILED'))` | |
@@ -266,20 +256,6 @@ erDiagram
 | `fk_task_assets_tasks` | `FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE` | 仅用于提交补偿删除；正常业务不删除任务 |
 | `chk_task_assets_size` | `CHECK (size_bytes > 0)` | 拒绝空文件 |
 
-### 2.7 `task_step_logs` — 阶段执行日志（P1，F-22 / T-074，`V3` 迁移）
-
-| 列 | 类型 | 空 | 说明 |
-| --- | --- | --- | --- |
-| `id` | `BIGINT UNSIGNED` AUTO_INCREMENT | N | PK |
-| `task_id` | `BIGINT UNSIGNED` | N | FK → tasks.id（`ON DELETE CASCADE`） |
-| `stage` | `VARCHAR(24)` | N | CHECK 同 `tasks.stage` |
-| `outcome` | `VARCHAR(16)` | N | `SUCCEEDED` / `FAILED` / `ABORTED`（被外部废弃） |
-| `started_at` | `DATETIME(3)` | N | |
-| `ended_at` | `DATETIME(3)` | N | |
-| `message` | `VARCHAR(255)` | Y | |
-
-索引：`uk_task_step_logs_task_stage UNIQUE (task_id, stage)`（每个任务每个阶段最多一条，同时满足外键索引）。MVP 不建这张表。
-
 ---
 
 ## 3. 关键查询与索引对照
@@ -294,14 +270,12 @@ erDiagram
 | Q6 | 单任务查询 | `SELECT t.*, tp.title, tp.cover_url FROM tasks t JOIN templates tp ON tp.id=t.template_id WHERE t.id=? AND t.user_id=?` | tasks PK |
 | Q7 | 详情页 History | `... WHERE t.user_id=? AND t.template_id=? ORDER BY t.created_at DESC, t.id DESC` | `idx_tasks_user_template_created` |
 | Q8 | 我的记录 | `... WHERE t.user_id=? ORDER BY t.created_at DESC, t.id DESC` | `idx_tasks_user_created` |
-| Q9 | 批量查询（P1） | `... WHERE t.user_id=? AND t.id IN (...)` | tasks PK |
-| Q10 | 素材批量加载（Q6 ~ Q9 之后） | `SELECT task_id, slot_index, storage_key FROM task_assets WHERE task_id IN (...) ORDER BY task_id, slot_index` | `uk_task_assets_task_slot` |
+| Q10 | 素材批量加载（Q6 ~ Q8 之后） | `SELECT task_id, slot_index, storage_key FROM task_assets WHERE task_id IN (...) ORDER BY task_id, slot_index` | `uk_task_assets_task_slot` |
 | Q11 | 废弃进行中任务 | 见 2.5 `abandonActiveByUser` | `idx_tasks_user_created` 前缀 |
-| Q12 | 重启扫描（P1） | `SELECT id FROM tasks WHERE status IN ('PENDING','PROCESSING')` | `idx_tasks_status` |
 | Q13 | 访问用户素材文件（DQ-02） | `SELECT a.storage_key, a.mime_type FROM task_assets a JOIN tasks t ON t.id=a.task_id WHERE a.storage_key=? AND t.user_id=?` | `uk_task_assets_storage_key` + tasks PK |
 | Q14 | 访问结果文件（DQ-02） | `SELECT result_url FROM tasks WHERE id=? AND user_id=? AND result_url=?` | tasks PK |
 
-Q6 ~ Q9、Q13、Q14 都带 `user_id = 当前用户`，是数据访问边界在 SQL 层的体现。Q10 只按 Q6 ~ Q9 已过滤出的 task_id 加载，不单独暴露。
+Q6 ~ Q8、Q13、Q14 都带 `user_id = 当前用户`，是数据访问边界在 SQL 层的体现。Q10 只按 Q6 ~ Q8 已过滤出的 task_id 加载，不单独暴露。
 
 ---
 
@@ -363,7 +337,7 @@ classpath:/seed/                  # 种子封面与预置结果图（只读，�
 | OQ-08 结果图来源 | `templates.sample_result_path` | 若改为"用第一张输入图"，该列可废弃，不需要迁移 |
 | OQ-09 余项 分页 | 无分页；索引已含 `(created_at, id)`，可直接支持游标分页 | 无需迁移 |
 | OQ-10 按任务配置模拟 | `tasks.sim_config` 快照已是按任务存储 | 无需迁移 |
-| OQ-13 重启处理 | `idx_tasks_status` 已预留 | 若新增失败码 `SERVICE_RESTARTED`，只是新的 `failure_code` 值，无需迁移 |
+| OQ-13 重启处理 | 本期不处理，只在 README 说明 | — |
 | OQ-26 余项 废弃用独立状态 | 用 `FAILED` + `ACCOUNT_DELETED` | 追加迁移修改 `chk_tasks_status` 加入 `CANCELLED` |
 | OQ-29 用户名规则 | `VARCHAR(20)` + CHECK | 修改列长和 CHECK |
 | OQ-30 邮箱规则 | `VARCHAR(254)`，`LOWER()` 判重 | — |

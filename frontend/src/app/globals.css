@@ -3,6 +3,7 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --focus-ring: #2563eb;
 }
 
 @theme inline {
@@ -16,9 +17,21 @@
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+    --focus-ring: #60a5fa;
   }
 }
 
 body {
   font-family: var(--font-sans);
+}
+
+/*
+ * 可见键盘焦点（F-19）：没有自定义焦点环的链接、按钮也有统一、明显的轮廓，不依赖各浏览器默认样式。
+ * 放在 base 层：组件上的 focus-visible:ring-* / outline-none（utilities 层）仍然优先。
+ */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
 }

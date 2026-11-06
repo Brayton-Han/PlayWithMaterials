@@ -4,6 +4,7 @@ import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeUser } from "@/test/fixtures";
+import { deferred, simulateFocusFixup } from "@/test/focus";
 import { server } from "@/test/msw/server";
 
 import { AuthProvider } from "./AuthProvider";
@@ -117,5 +118,27 @@ describe("LoginForm", () => {
   it("links to register keeping the next path", async () => {
     await renderLogin("next=%2Frecords");
     expect(screen.getByRole("link", { name: "注册" })).toHaveAttribute("href", "/register?next=%2Frecords");
+  });
+
+  it("returns keyboard focus to the submit button after a failed login (F-19)", async () => {
+    const gate = deferred();
+    server.use(
+      http.post("/api/auth/login", async () => {
+        await gate.promise;
+        return HttpResponse.json({ code: "INVALID_CREDENTIALS", message: "用户名或密码错误" }, { status: 401 });
+      }),
+    );
+    const user = userEvent.setup();
+    await renderLogin();
+
+    await user.type(screen.getByLabelText("用户名"), "demo1");
+    await user.type(screen.getByLabelText("密码"), "wrong-password");
+    await user.click(screen.getByRole("button", { name: "登录" }));
+    expect(await screen.findByRole("button", { name: "登录中…" })).toBeDisabled();
+    simulateFocusFixup(); // 真实浏览器：按钮被禁用后焦点丢回 body
+    gate.resolve();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("用户名或密码错误");
+    expect(screen.getByRole("button", { name: "登录" })).toHaveFocus();
   });
 });

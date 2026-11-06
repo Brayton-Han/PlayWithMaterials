@@ -203,7 +203,6 @@ export interface paths {
          * @description 只返回当前用户的任务，按 createdAt 倒序（同一时间再按 taskId 倒序），不分页（OQ-09 余项临时默认）。
          *     - 详情页 History：传 `templateId`，只返回该模板的任务；
          *     - "我的记录"页：不传参数，返回全部模板的任务；
-         *     - 批量状态查询（P1，F-21 / T-073）：传 `ids`，返回其中属于当前用户的任务，不存在或不属于当前用户的 ID 直接省略。`ids` 与 `templateId` 不能同时使用。
          *     纯只读，不会推进任何任务状态。templateId 不存在时返回空列表。
          */
         get: operations["listTasks"];
@@ -983,8 +982,6 @@ export interface operations {
         parameters: {
             query?: {
                 templateId?: string;
-                /** @description P1。逗号分隔的 taskId，最多 50 个。 */
-                ids?: string[];
             };
             header?: never;
             path?: never;

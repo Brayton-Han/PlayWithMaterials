@@ -13,7 +13,7 @@
 | 契约先行 | [api.yaml](./api.yaml) 是前后端唯一契约；前端类型从它生成；后端 Controller 只收发 DTO |
 | 状态单点推进 | 任务状态只由后端执行器通过**条件更新**推进；查询接口只读（R-05.2、R-05.3） |
 | 默认拒绝 | 除模板、注册、登录、健康检查外，所有 `/api/**` 都需要登录；所有用户数据查询都带 `user_id` 条件 |
-| 可替换 | 轮询 → 批量 / SSE、线程池 → 持久化队列、本地磁盘 → 对象存储，都只需替换单个模块的实现 |
+| 可替换 | 轮询 → SSE、线程池 → 持久化队列、本地磁盘 → 对象存储，都只需替换单个模块的实现 |
 
 ---
 
@@ -112,7 +112,7 @@ flowchart LR
 | 健康检查 | `spring-boot-starter-actuator`，只暴露 `health` | Compose 健康检查 |
 | 后端测试 | JUnit 5、Mockito、Spring Boot Test、Testcontainers（MySQL）、Awaitility | 编排逻辑单测 + 真实 MySQL 集成测试 |
 | 前端框架 | Next.js 16.4 App Router + React 19 + TypeScript 5（strict） | PRD 指定（R-01.1） |
-| 样式 | Tailwind CSS 4 | 无运行时开销，便于做暗色主题（F-18） |
+| 样式 | Tailwind CSS 4 | 无运行时开销，原子类直接写在组件上 |
 | 客户端状态 | React Context（身份）+ Zustand（任务 store） | Zustand store 可在 React 外读写，调度器和单测都方便；不引入数据请求库，任务跟踪逻辑自己实现以便解释（PRD 目标 2 的考察点） |
 | 契约类型 | `openapi-typescript` 从 `docs/api.yaml` 生成 `schema.d.ts` | 前端类型与契约一致 |
 | 前端测试 | Vitest、React Testing Library、MSW、fake timers | 覆盖 F-15 前端条目 |
@@ -353,7 +353,7 @@ sequenceDiagram
 3. `TaskPipeline` 捕获所有 `Throwable`，兜底写为 `FAILED / INTERNAL_ERROR`，`failureReason` 用通用中文文案，堆栈只写日志（F-06 规则 6、7）。
 4. 日志用 MDC 带上 `taskId`、`stage`，每步记录开始、结束、耗时、结果（requirements §9 可观察性）。
 5. 线程池：核心 = 最大 = `app.task.executor.pool-size`（默认 2），队列 `app.task.executor.queue-capacity`（默认 100），`AbortPolicy`，线程名前缀 `task-exec-` `[OQ-12]`。
-6. 优雅停机：`setWaitForTasksToCompleteOnShutdown(true)` + `awaitTermination` 30 s；超时后仍未完成的任务停在原状态，处理方式见 `[OQ-13]`（T-072 预留 `app.task.fail-interrupted-on-startup` 开关，默认关闭）。
+6. 优雅停机：`setWaitForTasksToCompleteOnShutdown(true)` + `awaitTermination` 30 s；超时后仍未完成的任务停在原状态，本期不处理，只在 README 说明（OQ-13 已确认）。
 
 ### 5.3 模拟配置（F-08）
 
@@ -406,7 +406,6 @@ sequenceDiagram
 - **前端 store 结构**：`Record<taskId, { task: TaskDto, query: { state: 'idle'|'loading'|'error', error?, lastSuccessAt? } }>`；按 `templateId` 和"全部"派生列表。
 - **查询异常 ≠ 任务失败**（R-07.2）：只有服务端返回 `status=FAILED` 才显示"制作失败"；查询异常叠加在最后已知状态上，并提供"重新查询"。
 - **刷新恢复**（R-09）：进入页面先拉历史，未结束的任务自动进入跟踪；状态以服务端为准。
-- P1（F-21 / T-073）：调度器改为每轮一次 `GET /api/tasks?ids=a,b,c`，store 和卡片不变。
 
 ### 5.5 删除账户（F-28）
 
@@ -524,9 +523,7 @@ frontend/src
 | F-13 种子数据 | — | Flyway `V2__seed_data.sql`、`classpath:/seed/` | categories、templates、users |
 | F-14 / F-15 CI 与测试 | Vitest | JUnit + Testcontainers | — |
 | F-17 Compose | Dockerfile | Dockerfile | 数据卷 |
-| F-20 重启边界（P1） | — | `StartupTaskReconciler`（开关，默认关） | tasks（`idx_tasks_status`） |
-| F-21 批量查询（P1） | useTaskTracker 批量模式 | `GET /api/tasks?ids=` | tasks |
-| F-22 步骤日志（P1） | — | TaskPipeline 写日志表 | task_step_logs（V3 迁移） |
+| F-20 重启边界 | — | 不处理，README 说明（OQ-13） | — |
 
 ---
 
@@ -534,7 +531,7 @@ frontend/src
 
 | 需要时 | 替换点 | 影响范围 |
 | --- | --- | --- |
-| 减少轮询请求 | `useTaskTracker` 改用批量接口（P1） / SSE（P2） | 只改 tracker；store、卡片不变 |
+| 减少轮询请求 | `useTaskTracker` 改用 SSE（P2） | 只改 tracker；store、卡片不变 |
 | 重启后继续执行 | `TaskDispatcher` 改为"DB 轮询领取 PENDING"或持久化队列 | 只改 dispatcher；pipeline、步骤不变 |
 | 多实例部署 | 文件存储换对象存储；会话表已在 DB 中，天然共享；领取任务需要行锁 | storage 模块、dispatcher |
 | 受理幂等（P2） | `POST /api/tasks` 增加 `Idempotency-Key` 头 + 唯一索引 | 提交 service + 一张表 / 一列 |

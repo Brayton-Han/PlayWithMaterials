@@ -100,6 +100,8 @@ describe("RegisterForm", () => {
 
     expect(await screen.findByText("用户名已被使用")).toBeInTheDocument();
     expect(screen.getByLabelText("用户名")).toHaveAttribute("aria-invalid", "true");
+    // F-19：服务端字段错误后焦点移到出错的字段
+    expect(screen.getByLabelText("用户名")).toHaveFocus();
     expect(nav.router.replace).not.toHaveBeenCalled();
   });
 

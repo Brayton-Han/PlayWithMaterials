@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { TextField } from "@/components/TextField";
 import { isAbortError, isApiError } from "@/lib/api/client";
+import { useKeepFocus } from "@/lib/useKeepFocus";
 
 import { useAuth } from "./AuthProvider";
 import { formErrorMessage, hasErrors, serverFieldErrors, type FieldErrors } from "./formErrors";
@@ -13,6 +14,7 @@ import { authPageHref, safeNextPath } from "./session";
 
 const FIELDS = ["username", "password"] as const;
 type Field = (typeof FIELDS)[number];
+const FOCUS_AFTER_SUBMIT = ['button[type="submit"]'];
 
 /** 登录只校验必填；长度上限（api.yaml LoginRequest：20 / 64）由输入框 maxLength 限制。 */
 export function validateLogin(values: Record<Field, string>): FieldErrors<Field> {
@@ -31,6 +33,9 @@ export function LoginForm() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors<Field>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  // 失败后焦点回到出错字段或提交按钮（提交期间按钮被禁用，浏览器会把焦点丢回 body）
+  const armFocus = useKeepFocus(formRef, submitting, FOCUS_AFTER_SUBMIT);
 
   // 已登录（包括刚登录成功）→ 回到来源页
   useEffect(() => {
@@ -40,6 +45,7 @@ export function LoginForm() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitting) return;
+    armFocus();
     const errors = validateLogin(values);
     setFieldErrors(errors);
     setFormError(null);
@@ -75,7 +81,7 @@ export function LoginForm() {
     setValues((prev) => ({ ...prev, [field]: event.target.value }));
 
   return (
-    <form noValidate onSubmit={handleSubmit} className="flex flex-col gap-4" aria-label="登录">
+    <form ref={formRef} noValidate onSubmit={handleSubmit} className="flex flex-col gap-4" aria-label="登录">
       <TextField
         label="用户名"
         name="username"

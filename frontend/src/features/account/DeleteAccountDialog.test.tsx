@@ -7,6 +7,7 @@ import { AuthProvider } from "@/features/auth/AuthProvider";
 import { RequireAuth } from "@/features/auth/RequireAuth";
 import { onUserScopeReset } from "@/features/auth/session";
 import { makeUser } from "@/test/fixtures";
+import { deferred, simulateFocusFixup } from "@/test/focus";
 import { server } from "@/test/msw/server";
 
 import { AccountSettings } from "./AccountSettings";
@@ -211,6 +212,27 @@ describe("DeleteAccountDialog", () => {
     expect(screen.getByText("demo1@example.com")).toBeInTheDocument();
     expect(userScoped.tasks).toEqual(["task-1"]);
     expect(nav.router.replace).not.toHaveBeenCalled();
+  });
+
+  it("returns keyboard focus to the confirm input after a failed delete (F-19)", async () => {
+    const gate = deferred();
+    server.use(
+      http.delete("/api/account", async () => {
+        await gate.promise;
+        return HttpResponse.json({ code: "INTERNAL_ERROR", message: "服务器开小差了，请稍后重试" }, { status: 500 });
+      }),
+    );
+    const user = userEvent.setup();
+    await renderAccountPage();
+    await openDialog(user);
+    await user.type(confirmInput(), "DELETE");
+    await user.click(confirmButton());
+    expect(await screen.findByRole("button", { name: "删除中…" })).toBeDisabled();
+    simulateFocusFixup(); // 真实浏览器：按钮被禁用后焦点丢失
+    gate.resolve();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("服务器开小差了");
+    expect(confirmInput()).toHaveFocus();
   });
 
   it("redirects to login when the session has already expired (401)", async () => {
