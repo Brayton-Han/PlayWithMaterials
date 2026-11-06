@@ -153,7 +153,6 @@ flowchart TD
 | **S4 交付** | T-060 | | CI 跑全部测试 |
 | | T-062 → T-061 | | `docker compose up --build` 一条命令完成全部演示 |
 | | | T-071（P0，2026-11-05 由 P1 提升） | 仅用键盘、360px 宽完成主流程与账户设置 |
-| **S5 打磨（P1，按剩余时间）** | T-072、T-073、T-074 | T-070、T-075 | 见 backlog §4 |
 
 S2 之所以把后端异步核心整体前置：它是 PRD 的首要考察点，且 curl 即可验证，不依赖前端 UI。
 
@@ -204,7 +203,7 @@ S2 之所以把后端异步核心整体前置：它是 PRD 的首要考察点，
 | T-042 | `TaskDispatcher`（`ThreadPoolTaskExecutor`，线程名 `task-exec-`）、`TaskPipeline`、`TaskStep` 接口、`StepFailedException`；MDC 日志 | `TaskPipelineTest`（Mockito，假 step）：见 T-046 第 1 ~ 3 项 | 提交后 `SELECT status, stage FROM tasks WHERE id=?` 反复执行，能看到阶段依次变化；日志中每步有开始 / 结束 / 耗时 |
 | T-043 | `AssetCheckStep`、`GenerateStep`、`ResultOrganizeStep`；每步开头调用 `SimulationGate`（sleep + 指定阶段失败） | `AssetCheckStepTest`：文件缺失 → `ASSET_MISSING`；大小与记录不一致 → `ASSET_INVALID`。`ResultOrganizeStepTest`：结果文件被写到 `results/{taskId}/`，返回的 URL 指向它。`SimulationGateTest`：failStage 匹配时抛 `SIMULATED_FAILURE`，原因为默认文案或自定义文案 | 成功任务的 `resultUrl` 在浏览器可打开；手动删除某个素材文件后提交的任务在 ASSET_CHECK 失败 |
 | T-044 | `SimulationProperties`（`app.simulation.*`）、`SimulationSettings`（`AtomicReference`）、`DevSimulationController`（`@Profile({"dev","demo"})`） | `DevSimulationControllerIT`：GET 返回默认值；PUT 合法值后 GET 一致；负数 / 超过 60000 / 非法阶段名 → 400；`prod` profile 下 404。`SimulationSnapshotIT`：改配置前创建的任务仍按旧快照执行 | `curl -X PUT $API/api/dev/simulation -H 'Content-Type: application/json' -d '{"assetCheckMs":1000,"generatingMs":5000,"resultOrganizingMs":1000,"failStage":"GENERATING","failReason":null}'` 后连续提交两个任务，都在 GENERATING 失败 |
-| T-045 | `TaskController.get`、`TaskController.list`（`templateId`；`ids` 参数先在契约中定义，T-073 再实现）；`TaskQueryService` 只读（类上 `@Transactional(readOnly = true)`） | `TaskQueryIT`：A 在模板 X、Y 各有任务，`?templateId=X` 只返回 X；不带参数两者都返回且按 `createdAt` 倒序；B 查 A 的 taskId → 404；B 的列表不含 A 的任务；非数字 taskId → 400；`inputAssets` 按 slotIndex 升序 | — |
+| T-045 | `TaskController.get`、`TaskController.list`（`templateId`）；`TaskQueryService` 只读（类上 `@Transactional(readOnly = true)`） | `TaskQueryIT`：A 在模板 X、Y 各有任务，`?templateId=X` 只返回 X；不带参数两者都返回且按 `createdAt` 倒序；B 查 A 的 taskId → 404；B 的列表不含 A 的任务；非数字 taskId → 400；`inputAssets` 按 slotIndex 升序 | — |
 | T-047（新增，S） | DQ-02：`storage.web.UserFileController` 提供 `/files/uploads/{yyyy}/{mm}/{fileName}`、`/files/results/{taskId}/{fileName}`；`AuthInterceptor` 覆盖这两个前缀；按 database.md Q13 / Q14 查归属，只用数据库中的 `storage_key` 读文件；`Cache-Control: private, no-store`。依赖 T-040、T-041、T-043 | `UserFileControllerIT`：本人 200 且 Content-Type 正确；匿名 401；他人 404；不存在 404；`fileName` 含 `..` 或不符合格式 404 / 400；删除账户后本人原 Cookie 401、其他用户 404 | 浏览器中任务卡片的缩略图和结果图正常显示；退出后直接打开图片链接返回 401 |
 | T-046 | 汇总下表的后端核心测试 | 见下表 | `./mvnw -B verify` 在开发容器与 CI 中都通过 |
 
@@ -304,7 +303,7 @@ S2 之所以把后端异步核心整体前置：它是 PRD 的首要考察点，
 
 已确认（2026-11-04）：DQ-01 dev 接口不需要登录；DQ-02 删除账户后文件链接失效（新增 T-047）；DQ-03 返回 `failureCode`；DQ-04 确认密码只在前端校验。
 | T-053 / T-055 前 | OQ-07、OQ-09 余项 | T-053 ~ T-055 | 前端行为 |
-| T-061 / T-062 前 | OQ-01、OQ-13、OQ-19、OQ-21 | T-061、T-062、T-072 | README、启动开关 |
+| T-061 / T-062 前 | OQ-01、OQ-13、OQ-19、OQ-21 | T-061、T-062 | README |
 
 DQ-01 ~ DQ-04 的说明见 [architecture.md §11](./architecture.md#11-本文涉及的未确定问题)。
 
@@ -319,4 +318,4 @@ DQ-01 ~ DQ-04 的说明见 [architecture.md §11](./architecture.md#11-本文涉
 | standalone 构建时 rewrites 目标被固化为 localhost | 容器中前端无法访问后端 | Dockerfile 用构建参数注入 `BACKEND_INTERNAL_URL` | T-005（**已在 S0 处理**：`frontend/Dockerfile` 构建参数，CI docker job 冒烟） |
 | Testcontainers 在 CI 中拉镜像慢 | CI 变慢 | 复用单个容器（`@Testcontainers` 静态容器 + 单例模式）；必要时改用 `services: mysql` | T-004、T-060 |
 | 时间相关测试不稳定 | CI 偶发失败 | 后端用 Awaitility + 短耗时配置（每阶段 50 ~ 200 ms）；前端统一用 fake timers | T-046、T-056 |
-| 演示时后端重启导致任务永远处理中 | 演示失败 | README 说明 OQ-13 边界；演示脚本避开；T-072 视结论实现 | T-061 |
+| 演示时后端重启导致任务永远处理中 | 演示失败 | README 说明 OQ-13 边界（已确认不处理）；演示脚本避开 | T-061 |

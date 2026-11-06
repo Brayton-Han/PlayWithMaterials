@@ -125,7 +125,6 @@ stateDiagram-v2
 | Template | id, title, categoryId, coverUrl, description, requiredImageCount, acceptedMimeTypes, maxFileSizeBytes, sampleResultUrl, sortOrder | 种子数据，只读 |
 | Asset | id, userId, taskId, slotIndex, storagePath, url, mimeType, sizeBytes, originalName, createdAt | 在提交请求中与任务一起创建（OQ-05 已确认），1 个素材只属于 1 个任务 |
 | Task | id, userId, templateId, status, stage, failedStage, failureCode, failureReason, resultUrl, simulationSnapshot, createdAt, startedAt, finishedAt, updatedAt | 核心实体 |
-| TaskStepLog（P1） | taskId, stage, outcome, startedAt, endedAt, message | 可选，用于证明阶段边界与排障 |
 
 枚举建议：
 
@@ -171,9 +170,7 @@ stateDiagram-v2
 | F-17 | Docker Compose 一键启动 | R-14 | P1（强烈建议纳入 MVP） |
 | F-18 | 视觉布局（参考 UI-01/02/03） | R-11.1 | P1 |
 | F-19 | 可访问性与小屏可操作 | R-11.2 | P0（2026-11-05 由 P1 提升：R-11.2 为 PRD 正文要求） |
-| F-20 | 服务重启时未完成任务的处理 | 不在范围 §1、R-13.2 | P1（至少 README 说明）`[待确认 OQ-13]` |
-| F-21 | 批量任务查询接口（减少轮询请求数） | R-08（优化） | P1 |
-| F-22 | 阶段执行日志 TaskStepLog | R-05.1（增强可观察性） | P1 |
+| F-20 | 服务重启时未完成任务的处理 | 不在范围 §1、R-13.2 | P1（只在 README 说明，OQ-13 已确认） |
 | F-23 | 任务受理幂等 | 不在范围 §2 | P2 |
 | F-24 | SSE / WebSocket 推送 | R-08.1（可选） | P2 |
 | F-25 | 失败任务重试 / 重新制作 / 断点续跑 / 自动重试 | R-06.2, 不在范围 §2 | P2 |
@@ -398,7 +395,6 @@ stateDiagram-v2
 **输入**
 - 单任务：taskId + 当前用户
 - 历史列表：当前用户 + 可选 templateId 过滤（详情页传 templateId；"我的记录"页不传，返回全部）
-- （P1，F-21）批量：taskId 列表
 
 **输出**
 - 任务视图：`{ taskId, templateId, templateTitle, templateCoverUrl, status, stage, failedStage, failureCode, failureReason, resultUrl, inputAssets: [{slotIndex, url}], createdAt, updatedAt, finishedAt }`（"我的记录"页要展示模板信息，所以模板标题和封面为必返字段）
@@ -504,7 +500,7 @@ stateDiagram-v2
 **业务规则**
 1. 允许连续创建多个任务；各任务状态、阶段、错误、结果按 taskId 隔离，互不串扰（R-08.1）。
 2. 自动跟踪所有未结束任务（PENDING/PROCESSING）；任务到达终态后停止对它的跟踪；无待跟踪任务时不再轮询（R-08.2）。
-3. `[技术决策]` 建议：单一调度器按固定间隔（如 1.5–2s）查询未结束任务（P1 可改为批量接口 F-21）；查询失败的任务可退避，但保留手动重新查询。
+3. `[技术决策]` 建议：单一调度器按固定间隔（如 1.5–2s）查询未结束任务；查询失败的任务可退避，但保留手动重新查询。
 4. 离开相关页面时取消进行中的请求（AbortController）并停止定时器。
 5. 切换用户时：取消全部请求、清空前一用户的任务数据、丢弃任何迟到的旧响应（以 userId/会话世代号校验）（R-08.2）。
 6. 跟踪范围：模板详情页（当前模板的未结束任务）和"我的记录"页（全部未结束任务）都要自动跟踪，离开页面即停止。离开这两个页面后（如回到列表页）是否继续跟踪并提示完成 `[待确认 OQ-09 余项]`（临时默认：不跟踪）。
@@ -782,13 +778,13 @@ stateDiagram-v2
 
 **验收标准**：仅用键盘可完成"登录 → 选模板 → 选图 → 提交 → 预览结果"以及账户设置中的两个操作；360px 宽下无横向滚动且可完成主流程。
 
-### F-20 服务重启时未完成任务的处理（P1）`[待确认 OQ-13]`
+### F-20 服务重启时未完成任务的处理（P1）
 
-PRD 不要求重启后自动恢复执行，但要求 README 说明该边界。重启后 PENDING/PROCESSING 任务若不处理，会永远显示"处理中"。候选：保持原状并在 README 说明 / 启动时标记为 FAILED（原因"服务重启中断"）/ 重新入队。临时默认：在 README 说明，具体处理待确认。
+PRD 不要求重启后自动恢复执行，但要求 README 说明该边界。OQ-13 已确认（2026-11-05）：本期不处理，重启前未结束的 PENDING / PROCESSING 任务保持原状态（前端会一直显示"处理中"），由 README 说明这一边界。
 
-### F-21 ~ F-27
+### F-23 ~ F-27
 
-见 §6 清单，P1 项可在 MVP 完成后视时间补充；P2 项本期不实现，仅在 README 讨论取舍。
+见 §6 清单，P2 项本期不实现，仅在 README 讨论取舍。
 
 ---
 
@@ -808,7 +804,6 @@ PRD 不要求重启后自动恢复执行，但要求 README 说明该边界。�
 | POST | `/api/tasks` | `multipart/form-data`：`templateId` + `files[]` → 202 `{ taskId, ... }` | F-03/F-05 |
 | GET | `/api/tasks/{taskId}` | 单任务状态 | F-07 |
 | GET | `/api/tasks?templateId=` | 当前用户历史：带 templateId 用于详情页，不带用于"我的记录"页 | F-07/F-11 |
-| GET | `/api/tasks?ids=a,b,c` | 批量状态（P1） | F-21 |
 | GET/PUT | `/api/dev/simulation` | 模拟配置（仅 dev/demo profile，不需要登录，DQ-01） | F-08 |
 | GET | `/files/seed/**` | 种子封面、示例图（公开） | F-13 |
 | GET | `/files/uploads/**`、`/files/results/**` | 上传素材、结果图（需登录，仅本人，DQ-02） | F-03/F-28 |
@@ -820,7 +815,7 @@ PRD 不要求重启后自动恢复执行，但要求 README 说明该边界。�
 | 类别 | 要求 |
 | --- | --- |
 | 一致性 | 任务状态转换由后端单点驱动；条件更新保证终态不可变 |
-| 可观察性 | 后端日志记录每个任务每个阶段的开始/结束/失败（含 taskId）；P1 落 TaskStepLog |
+| 可观察性 | 后端日志记录每个任务每个阶段的开始/结束/失败（含 taskId） |
 | 安全 | 资源按用户隔离；密码慢哈希存储，日志不记录密码；会话 Cookie 设 HttpOnly / SameSite；上传文件随机命名、限制类型/大小、禁止路径穿越，用户文件仅本人可访问（DQ-02）；开发接口仅 dev profile；仓库不含真实凭据（演示账户密码除外，并在 README 标明仅供演示） |
 | 性能 | 提交接口不受模拟耗时影响；轮询间隔合理，无未结束任务时零轮询 |
 | 可移植 | 通过 Compose 在任意装有 Docker 的机器运行；配置通过环境变量覆盖 |
@@ -831,7 +826,7 @@ PRD 不要求重启后自动恢复执行，但要求 README 说明该边界。�
 ### 10.1 纳入 MVP
 
 - 全部 P0：F-01 ~ F-16、F-19（可访问性与小屏）、F-28（账户设置）
-- P1 中建议一并交付：F-17（Compose）、F-18（基础视觉）、F-20（至少 README 说明）
+- P1 中一并交付：F-17（Compose）、F-18（基础视觉）、F-20（只在 README 说明）
 
 ### 10.2 暂不实现（本期范围外）
 
